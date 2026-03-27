@@ -216,6 +216,7 @@ def process_top_opportunity() -> None:
         graph_context,
         question,
         doc_paths=doc_paths,
+        current_yes_price=current_yes_price,
     )
     logger.info(
         "Probability estimate: %.4f  evidence_summary=%r",

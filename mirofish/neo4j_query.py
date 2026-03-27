@@ -138,6 +138,7 @@ def estimate_probability(
     node_count: int = 0,
     edge_count: int = 0,
     doc_paths: list[Path] | None = None,
+    current_yes_price: float | None = None,
 ) -> tuple[float, str]:
     """Estimate the YES probability for *market_question* using the LLM.
 
@@ -154,6 +155,10 @@ def estimate_probability(
     doc_paths:
         Optional list of raw fetched-doc Paths.  Used as a fallback when
         *graph_context* is empty.
+    current_yes_price:
+        The current Polymarket YES price (0.0–1.0).  When provided, it is
+        included in the prompt as a calibration anchor so the LLM knows the
+        market consensus before reasoning from evidence.
 
     Returns
     -------
@@ -184,6 +189,15 @@ def estimate_probability(
             else "No evidence available."
         )
 
+        if current_yes_price is not None:
+            price_line = (
+                f"Current market YES price: {current_yes_price:.3f} "
+                f"(this is the crowd consensus — only deviate significantly "
+                f"if the evidence strongly warrants it)\n\n"
+            )
+        else:
+            price_line = ""
+
         messages = [
             {
                 "role": "system",
@@ -196,6 +210,7 @@ def estimate_probability(
                 "role": "user",
                 "content": (
                     f"Market question: {market_question}\n\n"
+                    f"{price_line}"
                     f"Evidence:\n{evidence_block}\n\n"
                     'Respond with JSON: {"probability": <float 0.0 to 1.0>,'
                     ' "reasoning": "<2-3 sentences>"}'
