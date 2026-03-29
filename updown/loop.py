@@ -365,6 +365,34 @@ def _handle_market_resolved(
     )
 
 
+def _rotate_market(
+    tracked_markets: dict[str, TrackedMarket],
+    polymarket: PolymarketWSClient,
+) -> None:
+    """Seed the next 5-minute market when the current one has expired."""
+    seeded = _seed_markets_from_rest()
+    for condition_id, question, token_id, window_end in seeded:
+        if condition_id in tracked_markets:
+            continue
+        tracked = TrackedMarket(
+            condition_id=condition_id,
+            question=question,
+            asset_ids=[token_id],
+            expiry_time=window_end,
+            traded=False,
+        )
+        tracked_markets[condition_id] = tracked
+        polymarket.subscribe(token_id)
+        polymarket.seed_book_from_rest(token_id)
+        logger.info(
+            "[rotate] New market: %s — %s (token=%s, TTL=%.0fs)",
+            condition_id[:16],
+            question[:80],
+            token_id[:12],
+            window_end - time.time(),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Tick processing
 # ---------------------------------------------------------------------------
@@ -392,6 +420,10 @@ async def _process_tick(
     ]
     for cid in expired:
         _handle_market_resolved(cid, tracked_markets, polymarket)
+
+    # If no markets left, rotate to the next 5-minute window.
+    if not tracked_markets:
+        _rotate_market(tracked_markets, polymarket)
 
     # Evaluate each tracked market.
     for condition_id, tracked in list(tracked_markets.items()):
