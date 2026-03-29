@@ -28,7 +28,6 @@ from updown.polymarket_ws import PolymarketWSClient
 from updown.signal import compute_signal
 from updown.types import (
     MarketSnapshot,
-    NewMarket,
     OrderResult,
     PriceUpdate,
     SignalResult,
@@ -160,7 +159,7 @@ async def run() -> None:
     It launches:
 
     1. BinanceWS -- streams BTC/USDT trades into a shared asyncio.Queue.
-    2. PolymarketWSClient -- streams CLOB events; yields NewMarket objects.
+    2. PolymarketWSClient -- streams CLOB events; updates book prices.
     3. A tick-processing loop that reads from the Binance queue, computes
        signals for every tracked market, and executes trades when edge
        exceeds the threshold.
@@ -238,9 +237,8 @@ async def run() -> None:
         await binance.run()
 
     async def _polymarket_task() -> None:
-        """Run the Polymarket WS client and handle new-market / resolved events."""
-        async for new_market in polymarket.run():
-            _handle_new_market(new_market, tracked_markets, polymarket)
+        """Run the Polymarket WS client for live price updates."""
+        await polymarket.run()
 
     async def _tick_processor() -> None:
         """Consume Binance price ticks and evaluate signals for tracked markets."""
@@ -343,17 +341,6 @@ async def run() -> None:
 # Event handlers
 # ---------------------------------------------------------------------------
 
-def _handle_new_market(
-    new_market: NewMarket,
-    tracked_markets: dict[str, TrackedMarket],
-    polymarket: PolymarketWSClient,
-) -> None:
-    """No-op — we only track the single market seeded by slug at startup.
-
-    WS new-market events are ignored; kept as a callback stub so the
-    polymarket task loop doesn't need restructuring.
-    """
-    return
 
 
 def _handle_market_resolved(

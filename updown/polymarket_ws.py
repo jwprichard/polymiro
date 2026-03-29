@@ -2,8 +2,7 @@
 
 Connects to the Polymarket CLOB websocket, subscribes to market channels,
 and maintains a live order-book snapshot (best bid/ask) for each tracked
-asset_id.  Emits ``NewMarket`` objects when the server announces a new
-market and exposes helper methods to read the latest YES/NO mid-prices.
+asset_id.  Exposes helper methods to read the latest YES/NO mid-prices.
 
 Reconnection uses exponential backoff with jitter, and all tracked
 asset_ids are re-subscribed automatically after a reconnect.
@@ -17,7 +16,7 @@ import logging
 import random
 import time
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Callable, Optional
+from typing import Optional
 
 import requests
 import websockets
@@ -30,7 +29,6 @@ from config import (
     UPDOWN_RECONNECT_BASE_DELAY_S,
     UPDOWN_RECONNECT_MAX_DELAY_S,
 )
-from updown.types import NewMarket
 
 logger = logging.getLogger(__name__)
 
@@ -73,15 +71,11 @@ class PolymarketWSClient:
 
         client = PolymarketWSClient()
         client.subscribe("asset_id_123")
+        await client.run()  # blocks, processing price updates
 
-        async for event in client.run():
-            if isinstance(event, NewMarket):
-                print(f"New market: {event.question}")
-
-    The ``run()`` async generator yields ``NewMarket`` objects and never
-    returns under normal operation.  On disconnect it automatically
-    reconnects with exponential backoff and re-subscribes to all tracked
-    asset_ids.
+    ``run()`` never returns under normal operation.  On disconnect it
+    automatically reconnects with exponential backoff and re-subscribes
+    to all tracked asset_ids.
     """
 
     def __init__(
@@ -90,13 +84,11 @@ class PolymarketWSClient:
         heartbeat_interval_s: int = UPDOWN_HEARTBEAT_INTERVAL_S,
         reconnect_base_delay_s: float = UPDOWN_RECONNECT_BASE_DELAY_S,
         reconnect_max_delay_s: float = UPDOWN_RECONNECT_MAX_DELAY_S,
-        on_new_market: Optional[Callable[[NewMarket], None]] = None,
     ) -> None:
         self._url = url
         self._heartbeat_interval_s = heartbeat_interval_s
         self._reconnect_base_delay_s = reconnect_base_delay_s
         self._reconnect_max_delay_s = reconnect_max_delay_s
-        self._on_new_market = on_new_market
 
         # Tracked asset_ids — survives reconnects.
         self._subscribed_assets: set[str] = set()
@@ -249,8 +241,8 @@ class PolymarketWSClient:
     # Main event loop
     # ------------------------------------------------------------------
 
-    async def run(self) -> AsyncIterator[NewMarket]:
-        """Connect, subscribe, and yield NewMarket events forever.
+    async def run(self) -> None:
+        """Connect, subscribe, and process price updates forever.
 
         On any connection drop the method reconnects with exponential
         backoff + jitter and re-subscribes to all tracked assets.
@@ -283,12 +275,7 @@ class PolymarketWSClient:
 
                     try:
                         async for raw_msg in ws:
-                            events = self._parse_message(raw_msg)
-                            for evt in events:
-                                if isinstance(evt, NewMarket):
-                                    if self._on_new_market is not None:
-                                        self._on_new_market(evt)
-                                    yield evt
+                            self._parse_message(raw_msg)
                     finally:
                         if self._ping_task and not self._ping_task.done():
                             self._ping_task.cancel()
@@ -385,19 +372,13 @@ class PolymarketWSClient:
     # Message parsing
     # ------------------------------------------------------------------
 
-    def _parse_message(self, raw: str | bytes) -> list[NewMarket]:
-        """Parse a raw websocket message and update internal state.
-
-        Returns a list of ``NewMarket`` objects for any ``new_market``
-        events found.  All other event types update the book silently.
-        """
-        new_markets: list[NewMarket] = []
-
+    def _parse_message(self, raw: str | bytes) -> None:
+        """Parse a raw websocket message and update internal book state."""
         try:
             data = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             logger.warning("Unparseable WS message: %s", raw[:200] if raw else raw)
-            return new_markets
+            return
 
         # The CLOB WS may send a single event dict or a list of events.
         events: list[dict] = data if isinstance(data, list) else [data]
@@ -409,15 +390,7 @@ class PolymarketWSClient:
                 self._handle_book(event)
             elif event_type == "price_change":
                 self._handle_price_change(event)
-            elif event_type == "new_market":
-                nm = self._handle_new_market(event)
-                if nm is not None:
-                    new_markets.append(nm)
-            elif event_type == "market_resolved":
-                self._handle_market_resolved(event)
-            # Silently ignore unknown event types (heartbeat acks, etc.)
-
-        return new_markets
+            # Silently ignore other event types (new_market, resolved, heartbeat acks, etc.)
 
     def _handle_book(self, event: dict) -> None:
         """Process a full order-book snapshot.
@@ -493,49 +466,6 @@ class PolymarketWSClient:
             # Real best_bid/best_ask from WS supersedes the REST seed.
             book.server_mid = None
             book.last_update_ms = now_ms
-
-    def _handle_new_market(self, event: dict) -> Optional[NewMarket]:
-        """Process a new-market announcement and return a typed object."""
-        market_id = event.get("market_id") or event.get("condition_id", "")
-        question = event.get("question", "")
-        token_id = event.get("token_id") or event.get("asset_id", "")
-
-        if not market_id:
-            logger.debug("new_market event missing market_id: %s", event)
-            return None
-
-        yes_price = float(event.get("yes_price", 0.5))
-        no_price = float(event.get("no_price", 1.0 - yes_price))
-        tags = event.get("tags", [])
-        if isinstance(tags, str):
-            tags = [t.strip() for t in tags.split(",") if t.strip()]
-
-        nm = NewMarket(
-            market_id=market_id,
-            question=question,
-            token_id=token_id,
-            yes_price=yes_price,
-            no_price=no_price,
-            tags=tags,
-            discovered_at=event.get("timestamp", ""),
-        )
-        logger.info("New market discovered: %s — %s", market_id, question)
-        return nm
-
-    def _handle_market_resolved(self, event: dict) -> None:
-        """Process a market-resolved event — remove from tracked books."""
-        asset_id = event.get("asset_id", "")
-        market_id = event.get("market_id", "")
-        logger.info(
-            "Market resolved: market_id=%s asset_id=%s outcome=%s",
-            market_id,
-            asset_id,
-            event.get("outcome", "unknown"),
-        )
-        # Clean up tracked state if this asset was subscribed.
-        if asset_id:
-            self._subscribed_assets.discard(asset_id)
-            self._books.pop(asset_id, None)
 
     # ------------------------------------------------------------------
     # Price helpers
