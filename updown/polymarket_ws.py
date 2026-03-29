@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-import requests
+import aiohttp
 import websockets
 import websockets.exceptions
 
@@ -29,6 +29,7 @@ from config import (
     UPDOWN_RECONNECT_BASE_DELAY_S,
     UPDOWN_RECONNECT_MAX_DELAY_S,
 )
+from updown.retry import retry_async
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,17 @@ class PolymarketWSClient:
             return None
         return round(1.0 - yes, 6)
 
+    def get_price_age_ms(self, asset_id: str) -> Optional[int]:
+        """Return milliseconds since the last book update for *asset_id*.
+
+        Returns ``None`` if no book exists for the given asset.
+        """
+        book = self._books.get(asset_id)
+        if book is None:
+            return None
+        now_ms = int(time.time() * 1000)
+        return now_ms - book.last_update_ms
+
     def get_book(self, asset_id: str) -> Optional[_AssetBook]:
         """Return the raw book snapshot for an asset, or None."""
         return self._books.get(asset_id)
@@ -149,27 +161,37 @@ class PolymarketWSClient:
     def subscribed_assets(self) -> set[str]:
         return set(self._subscribed_assets)
 
-    def seed_book_from_rest(self, token_id: str) -> None:
+    async def seed_book_from_rest(
+        self, token_id: str, session: aiohttp.ClientSession
+    ) -> None:
         """Fetch the current order book for *token_id* via the CLOB REST API
         and populate ``_books`` so that ``get_yes_price()`` returns a real
         value immediately -- before the WebSocket connection is established.
 
-        This is a **synchronous** call intended to be invoked at startup.
+        This is an **async** call that uses the shared *session* to avoid
+        creating a new ``aiohttp.ClientSession`` per invocation.
         On any error (network, HTTP, malformed JSON) the method logs a
         warning and returns without crashing so the system can fall back to
         WS-driven prices.
         """
         url = f"{POLYMARKET_CLOB_REST_URL}/book"
         params = {"token_id": token_id}
+        timeout = aiohttp.ClientTimeout(total=10)
+
+        async def _fetch_book() -> dict:
+            async with session.get(url, params=params, timeout=timeout) as resp:
+                resp.raise_for_status()
+                return await resp.json()
+
         try:
-            resp = requests.get(url, params=params, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
+            data = await retry_async(
+                _fetch_book,
+                description=f"CLOB book seed for {token_id[:16]}",
+            )
         except Exception:
-            logger.warning(
-                "REST seed failed for token %s — will rely on WS updates",
+            logger.error(
+                "REST seed failed for token %s after all retries — will rely on WS updates",
                 token_id[:16],
-                exc_info=True,
             )
             return
 
@@ -199,15 +221,16 @@ class PolymarketWSClient:
         # Fetch the server-side midpoint — more accurate than our
         # local (best_bid + best_ask) / 2 for wide-spread markets.
         try:
-            mid_resp = requests.get(
+            async with session.get(
                 f"{POLYMARKET_CLOB_REST_URL}/midpoint",
                 params={"token_id": token_id},
-                timeout=10,
-            )
-            mid_resp.raise_for_status()
-            server_mid = float(mid_resp.json().get("mid", 0))
-            if server_mid > 0:
-                book.server_mid = server_mid
+                timeout=timeout,
+            ) as mid_resp:
+                mid_resp.raise_for_status()
+                mid_data = await mid_resp.json()
+                server_mid = float(mid_data.get("mid", 0))
+                if server_mid > 0:
+                    book.server_mid = server_mid
         except Exception:
             logger.debug(
                 "Could not fetch /midpoint for %s — using local mid",

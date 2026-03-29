@@ -76,6 +76,13 @@ MONITOR_PRICE_FETCH_DELAY_S: float = float(os.environ.get("MONITOR_PRICE_FETCH_D
 PENDING_TRADES_FILE: Path = DATA_DIR / "pending_trades.json"
 DRY_TRADES_FILE: Path = DATA_DIR / "dry_trades.json"
 MONITOR_REPORT_FILE: Path = DATA_DIR / "monitor_report.json"
+PNL_REPORT_FILE: Path = Path(os.environ.get("PNL_REPORT_FILE", str(DATA_DIR / "pnl_report.json")))
+
+# Gamma API — Polymarket's market-metadata service used for P&L resolution data.
+GAMMA_API_BASE_URL: str = os.environ.get("GAMMA_API_BASE_URL", "https://gamma-api.polymarket.com")
+
+# Fee rate applied when computing net P&L (fraction, e.g. 0.02 = 2%).
+PNL_FEE_RATE: float = float(os.environ.get("PNL_FEE_RATE", "0.02"))
 
 # ---------------------------------------------------------------------------
 # Updown strategy — real-time BTC price → Polymarket up/down market trading
@@ -136,6 +143,16 @@ UPDOWN_SCALE_FACTOR: float = float(os.environ.get("UPDOWN_SCALE_FACTOR", "0.01")
 # abs(pct_change) below this value are logged at DEBUG level and skipped.
 # Default 0.0001 = 0.01%.
 UPDOWN_MIN_BTC_PCT_CHANGE: float = float(os.environ.get("UPDOWN_MIN_BTC_PCT_CHANGE", "0.0001"))
+
+# Maximum acceptable slippage between signal-time price and execution-time
+# price, expressed as an absolute delta on the [0, 1] probability scale.
+# Orders that exceed this tolerance are rejected before submission.
+UPDOWN_SLIPPAGE_TOLERANCE: float = float(os.environ.get("UPDOWN_SLIPPAGE_TOLERANCE", "0.01"))
+
+# Seconds before a market expires to proactively seed the next-window market.
+# Both markets coexist during this handoff window; the expiring market remains
+# tradeable until its actual TTL reaches 0.
+UPDOWN_ROTATION_LEAD_TIME_S: float = float(os.environ.get("UPDOWN_ROTATION_LEAD_TIME_S", "10"))
 
 # Persistent trade log for the updown strategy.
 UPDOWN_TRADES_FILE: Path = DATA_DIR / "updown_trades.json"

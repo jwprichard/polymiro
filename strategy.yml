@@ -1,0 +1,39 @@
+# strategy.yml — Updown strategy configuration
+#
+# Sections: signal, features, exit_rules, execution
+# Only exit_rules is populated with real values; other sections are
+# skeleton placeholders for future implementation.
+
+# ── Signal parameters ────────────────────────────────────────────────
+signal:
+  # type: momentum        # e.g. momentum, mean_reversion, breakout
+  # lookback_seconds: 300
+  # smoothing: ema
+
+# ── Feature flags / toggles ──────────────────────────────────────────
+features:
+  # use_volume_filter: false
+  # use_spread_guard: true
+  # max_spread: 0.08
+
+# ── Exit rules (active) ─────────────────────────────────────────────
+exit_rules:
+  take_profit:
+    enabled: true
+    target_delta: 0.06          # close position when favourable delta >= this
+
+  stop_loss:
+    enabled: true
+    max_loss_delta: 0.04        # close position when adverse delta >= this
+
+  time_exit:
+    enabled: true
+    max_hold_seconds: 240       # force-close after this many seconds
+
+  allow_reentry: false          # re-enter the same market after an exit?
+
+# ── Execution parameters ─────────────────────────────────────────────
+execution:
+  # order_type: limit
+  # size_usdc: 5.0
+  slippage_tolerance: 0.01

@@ -16,15 +16,19 @@ import logging
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
 from py_clob_client.client import ClobClient
 from py_clob_client.order_builder.constants import BUY, SELL
 
 import config
-from updown.types import OrderResult, TradeIntent
+from updown.exit_rules import ExitSignal
+from updown.types import MarketSnapshot, OrderResult, SignalResult, TradeIntent
 from utils.io import atomic_append_to_json_list
+
+if TYPE_CHECKING:
+    from updown.loop import TrackedMarket
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +38,49 @@ _POLYGON_CHAIN_ID = 137
 # Default HTTP timeout for order submission (seconds).
 _REQUEST_TIMEOUT_S = 10
 
+# Exit trades use a wider slippage tolerance to prioritise closing
+# positions over price precision.
+_EXIT_SLIPPAGE_MULTIPLIER: float = 2.0
+
+# Module-level counter for dashboard / heartbeat visibility.
+slippage_rejections: int = 0
+
 
 class ExecutorError(Exception):
     """Raised when order placement fails in a recoverable way."""
+
+
+# ---------------------------------------------------------------------------
+# Slippage protection
+# ---------------------------------------------------------------------------
+
+
+def check_slippage(
+    signal_price: float,
+    execution_price: float,
+    tolerance: float,
+) -> bool:
+    """Return True when slippage exceeds *tolerance*.
+
+    This is a pure function with no side effects — it only compares the
+    absolute price delta against the tolerance threshold.
+
+    Parameters
+    ----------
+    signal_price:
+        The market price at the time the signal was generated.
+    execution_price:
+        The market price at the time the order would be submitted.
+    tolerance:
+        Maximum acceptable absolute delta between the two prices.
+
+    Returns
+    -------
+    bool
+        ``True`` if ``abs(signal_price - execution_price) > tolerance``,
+        i.e. slippage is excessive and the order should be rejected.
+    """
+    return abs(signal_price - execution_price) > tolerance
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +131,84 @@ def _get_clob_client() -> ClobClient:
 # ---------------------------------------------------------------------------
 
 
+def build_exit_intent(
+    tracked: TrackedMarket,
+    exit_signal: ExitSignal,
+    current_price: float,
+    *,
+    no_price: Optional[float] = None,
+) -> TradeIntent:
+    """Construct a sell-side TradeIntent from an open position and its exit signal.
+
+    Parameters
+    ----------
+    tracked:
+        The TrackedMarket with an open position (entry_* fields populated).
+    exit_signal:
+        The ExitSignal that triggered the exit (provides reason/detail).
+    current_price:
+        The current YES price at which the sell will be submitted.
+    no_price:
+        Real NO price from the order book.  When ``None``, falls back to
+        ``1.0 - current_price`` (explicit fallback for when the NO token
+        is not subscribed or the book is empty).
+
+    Returns
+    -------
+    TradeIntent
+        A fully populated sell-side intent ready for ``place_order``.
+
+    Raises
+    ------
+    ValueError
+        If the tracked market does not have a recorded open position.
+    """
+    if not tracked.has_open_position:
+        raise ValueError(
+            f"Cannot build exit intent: market {tracked.condition_id} "
+            "has no open position (entry_price is None)"
+        )
+
+    # The token_id is the first (and currently only) asset for the market.
+    token_id = tracked.asset_ids[0]
+
+    # Fallback: derive NO price from YES when the caller does not
+    # supply a real order-book NO price.
+    resolved_no_price = no_price if no_price is not None else 1.0 - current_price
+
+    # Build a minimal MarketSnapshot for the exit.
+    snapshot = MarketSnapshot(
+        market_id=tracked.condition_id,
+        question=tracked.question,
+        token_id=token_id,
+        yes_price=current_price,
+        no_price=resolved_no_price,
+        spread=abs(current_price - resolved_no_price),
+        timestamp_ms=int(time.time() * 1000),
+    )
+
+    # Build a minimal SignalResult for the exit (no momentum computation).
+    signal = SignalResult(
+        direction=tracked.entry_side.upper() if tracked.entry_side else "YES",
+        implied_probability=current_price,
+        market_price=current_price,
+        edge=0.0,
+        should_trade=True,
+    )
+
+    return TradeIntent(
+        market_id=tracked.condition_id,
+        token_id=token_id,
+        side="sell",
+        outcome=tracked.entry_side or "yes",  # same outcome token we bought
+        size_usdc=tracked.entry_size_usdc or 0.0,
+        signal=signal,
+        market=snapshot,
+        reason=f"EXIT ({exit_signal.reason}): {exit_signal.detail}",
+        signal_price=resolved_no_price if (tracked.entry_side and tracked.entry_side.upper() == "NO") else current_price,
+    )
+
+
 async def place_order(
     intent: TradeIntent,
     *,
@@ -94,6 +216,9 @@ async def place_order(
     implied_prob: float = 0.0,
     market_price: float = 0.0,
     timeout_s: float = _REQUEST_TIMEOUT_S,
+    exit_reason: Optional[str] = None,
+    entry_price: Optional[float] = None,
+    hold_duration_s: Optional[float] = None,
 ) -> OrderResult:
     """Place (or dry-run) an aggressive limit order on the Polymarket CLOB.
 
@@ -133,6 +258,35 @@ async def place_order(
     trade_id = str(uuid.uuid4())
 
     # ------------------------------------------------------------------
+    # Slippage guard — reject if price moved too far since signal time
+    # ------------------------------------------------------------------
+    if intent.signal_price is not None and market_price > 0:
+        global slippage_rejections
+        tolerance = config.UPDOWN_SLIPPAGE_TOLERANCE
+        if intent.side == "sell":
+            tolerance *= _EXIT_SLIPPAGE_MULTIPLIER
+        if check_slippage(intent.signal_price, market_price, tolerance):
+            delta = abs(intent.signal_price - market_price)
+            logger.warning(
+                "Slippage rejected %s %s %s: signal_price=%.4f execution_price=%.4f "
+                "delta=%.4f tolerance=%.4f",
+                intent.side,
+                intent.outcome,
+                intent.token_id[:12],
+                intent.signal_price,
+                market_price,
+                delta,
+                tolerance,
+            )
+            slippage_rejections += 1
+            return OrderResult(
+                intent=intent,
+                success=False,
+                error=f"slippage exceeded: delta={delta:.4f} > tolerance={tolerance:.4f}",
+                timestamp_ms=now_ms,
+            )
+
+    # ------------------------------------------------------------------
     # Dry mode — no network call, immediate synthetic result
     # ------------------------------------------------------------------
     if config.UPDOWN_DRY_MODE:
@@ -154,7 +308,17 @@ async def place_order(
             error=None,
             timestamp_ms=now_ms,
         )
-        _persist_trade(trade_id, intent, result, edge, implied_prob, market_price, dry=True)
+        _persist_trade(
+            trade_id, intent, result, edge, implied_prob, market_price,
+            dry=True,
+            exit_reason=exit_reason,
+            entry_price=entry_price,
+            exit_price=market_price if intent.side == "sell" else None,
+            hold_duration_s=hold_duration_s,
+            realized_delta=_compute_realized_delta(
+                intent.outcome, entry_price, market_price
+            ) if intent.side == "sell" and entry_price is not None else None,
+        )
         return result
 
     # ------------------------------------------------------------------
@@ -253,7 +417,15 @@ async def place_order(
         )
 
     _persist_trade(
-        trade_id, intent, result, edge, implied_prob, market_price, dry=False
+        trade_id, intent, result, edge, implied_prob, market_price,
+        dry=False,
+        exit_reason=exit_reason,
+        entry_price=entry_price,
+        exit_price=market_price if intent.side == "sell" else None,
+        hold_duration_s=hold_duration_s,
+        realized_delta=_compute_realized_delta(
+            intent.outcome, entry_price, market_price
+        ) if intent.side == "sell" and entry_price is not None else None,
     )
     return result
 
@@ -261,6 +433,24 @@ async def place_order(
 # ---------------------------------------------------------------------------
 # Persistence
 # ---------------------------------------------------------------------------
+
+
+def _compute_realized_delta(
+    outcome: str,
+    entry_price: Optional[float],
+    exit_price: float,
+) -> Optional[float]:
+    """Compute the realized P&L delta for a closed position.
+
+    For YES side: profit = exit_price - entry_price
+    For NO side:  profit = entry_price - exit_price
+    """
+    if entry_price is None:
+        return None
+    if outcome.lower() == "yes":
+        return exit_price - entry_price
+    else:
+        return entry_price - exit_price
 
 
 def _persist_trade(
@@ -272,9 +462,30 @@ def _persist_trade(
     market_price: float,
     *,
     dry: bool,
+    exit_reason: Optional[str] = None,
+    entry_price: Optional[float] = None,
+    exit_price: Optional[float] = None,
+    hold_duration_s: Optional[float] = None,
+    realized_delta: Optional[float] = None,
 ) -> None:
-    """Append a complete trade record to ``UPDOWN_TRADES_FILE``."""
-    record = {
+    """Append a complete trade record to ``UPDOWN_TRADES_FILE``.
+
+    Parameters
+    ----------
+    exit_reason:
+        For sell trades: "take_profit", "stop_loss", or "time_exit".
+        Omitted (None) for buy trades.
+    entry_price:
+        For sell trades: the price at which the position was originally entered.
+    exit_price:
+        For sell trades: the price at which the position was closed.
+    hold_duration_s:
+        For sell trades: seconds between entry and exit.
+    realized_delta:
+        For sell trades: profit/loss expressed as price delta
+        (exit_price - entry_price for YES side, entry_price - exit_price for NO side).
+    """
+    record: dict[str, object] = {
         "trade_id": trade_id,
         "asset_id": intent.token_id,
         "direction": intent.side,
@@ -289,8 +500,76 @@ def _persist_trade(
         "outcome": intent.outcome,
         "market_id": intent.market_id,
     }
+
+    # Sell-side enrichment for P&L analysis.
+    if intent.side == "sell":
+        record["exit_reason"] = exit_reason
+        if entry_price is not None:
+            record["entry_price"] = round(entry_price, 6)
+        if exit_price is not None:
+            record["exit_price"] = round(exit_price, 6)
+        if hold_duration_s is not None:
+            record["hold_duration_s"] = round(hold_duration_s, 2)
+        if realized_delta is not None:
+            record["realized_delta"] = round(realized_delta, 6)
+
     try:
         atomic_append_to_json_list(config.UPDOWN_TRADES_FILE, record)
     except Exception:
         # Persistence failure must not crash the trading loop.
         logger.exception("Failed to persist trade record %s", trade_id)
+
+    # Compute and persist P&L immediately for exit trades.
+    if intent.side == "sell" and entry_price is not None and exit_price is not None:
+        _persist_exit_pnl(trade_id, intent, entry_price, exit_price, exit_reason, hold_duration_s)
+
+
+def _persist_exit_pnl(
+    trade_id: str,
+    intent: TradeIntent,
+    entry_price: float,
+    exit_price: float,
+    exit_reason: Optional[str],
+    hold_duration_s: Optional[float],
+) -> None:
+    """Compute P&L for a completed exit and append to the PnL report."""
+    amount = intent.size_usdc
+    shares = round(amount / entry_price, 6)
+    exit_value = round(shares * exit_price, 6)
+    gross_pnl = round(exit_value - amount, 6)
+    fee = round(config.PNL_FEE_RATE * gross_pnl, 6) if gross_pnl > 0 else 0.0
+    net_pnl = round(gross_pnl - fee, 6)
+
+    pnl_record = {
+        "trade_id": trade_id,
+        "market_id": intent.market_id,
+        "outcome_bet": intent.outcome.upper(),
+        "entry_price": round(entry_price, 6),
+        "exit_price": round(exit_price, 6),
+        "amount_usdc": round(amount, 6),
+        "shares": shares,
+        "payout": exit_value,
+        "gross_pnl": gross_pnl,
+        "fee": fee,
+        "net_pnl": net_pnl,
+        "resolved_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "source": "updown",
+        "settlement_type": "exit",
+        "exit_reason": exit_reason,
+        "hold_duration_s": hold_duration_s,
+    }
+
+    try:
+        atomic_append_to_json_list(config.PNL_REPORT_FILE, pnl_record)
+        logger.info(
+            "[P&L] %s %s: entry=%.4f exit=%.4f shares=%.2f net=%+.4f USDC (%s)",
+            intent.outcome.upper(),
+            intent.market_id[:16],
+            entry_price,
+            exit_price,
+            shares,
+            net_pnl,
+            exit_reason,
+        )
+    except Exception:
+        logger.exception("Failed to persist P&L record %s", trade_id)

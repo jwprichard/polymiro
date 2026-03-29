@@ -51,6 +51,7 @@ class TradeIntent:
     signal: SignalResult
     market: MarketSnapshot
     reason: str
+    signal_price: Optional[float] = None  # price at signal time, for slippage check
 
 
 @dataclass
