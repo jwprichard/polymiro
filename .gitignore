@@ -5,3 +5,5 @@ __pycache__/
 *.pyo
 *.egg-info/
 .env
+# Tick logs (large JSONL files generated at runtime)
+**/updown_ticks_*.jsonl
