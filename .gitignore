@@ -1,4 +1,5 @@
 data/*.json
+MiroFish-Offline/
 __pycache__/
 *.pyc
 *.pyo

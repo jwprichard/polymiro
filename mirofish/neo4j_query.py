@@ -128,8 +128,8 @@ def format_graph_as_context(rows: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 _DOC_READ_LIMIT = 1000       # chars per file when falling back to raw docs
-_DOC_TOTAL_LIMIT = 6000      # total chars for concatenated doc fallback
-_PROMPT_CONTEXT_LIMIT = 5000 # chars passed inside the user message
+_DOC_TOTAL_LIMIT = 12000     # total chars for concatenated doc fallback
+_PROMPT_CONTEXT_LIMIT = 10000 # chars passed inside the user message
 
 
 def estimate_probability(
@@ -139,6 +139,8 @@ def estimate_probability(
     edge_count: int = 0,
     doc_paths: list[Path] | None = None,
     current_yes_price: float | None = None,
+    race_sides: list[str] | None = None,
+    side_b_doc_paths: list[Path] | None = None,
 ) -> tuple[float, str]:
     """Estimate the YES probability for *market_question* using the LLM.
 
@@ -170,15 +172,49 @@ def estimate_probability(
     try:
         # Build effective context -----------------------------------------
         if not graph_context and doc_paths:
-            parts: list[str] = []
-            for p in doc_paths:
-                try:
-                    text = p.read_text(encoding="utf-8", errors="replace")
-                    parts.append(text[:_DOC_READ_LIMIT])
-                except Exception:  # noqa: BLE001
-                    continue
-            concatenated = "\n\n".join(parts)
-            effective_context = concatenated[:_DOC_TOTAL_LIMIT]
+            _two_sided = (
+                race_sides is not None
+                and len(race_sides) == 2
+                and side_b_doc_paths
+            )
+
+            if _two_sided:
+                half_limit = _DOC_TOTAL_LIMIT // 2
+
+                # Side A docs (existing doc_paths)
+                side_a_parts: list[str] = []
+                for p in doc_paths:
+                    try:
+                        text = p.read_text(encoding="utf-8", errors="replace")
+                        side_a_parts.append(text[:_DOC_READ_LIMIT])
+                    except Exception:  # noqa: BLE001
+                        continue
+                side_a_text = "\n\n".join(side_a_parts)[:half_limit]
+
+                # Side B docs
+                side_b_parts: list[str] = []
+                for p in side_b_doc_paths:
+                    try:
+                        text = p.read_text(encoding="utf-8", errors="replace")
+                        side_b_parts.append(text[:_DOC_READ_LIMIT])
+                    except Exception:  # noqa: BLE001
+                        continue
+                side_b_text = "\n\n".join(side_b_parts)[:half_limit]
+
+                effective_context = (
+                    f"=== Side A: {race_sides[0]} ===\n{side_a_text}\n\n"
+                    f"=== Side B: {race_sides[1]} ===\n{side_b_text}"
+                )
+            else:
+                parts: list[str] = []
+                for p in doc_paths:
+                    try:
+                        text = p.read_text(encoding="utf-8", errors="replace")
+                        parts.append(text[:_DOC_READ_LIMIT])
+                    except Exception:  # noqa: BLE001
+                        continue
+                concatenated = "\n\n".join(parts)
+                effective_context = concatenated[:_DOC_TOTAL_LIMIT]
         else:
             effective_context = graph_context
 
@@ -198,6 +234,21 @@ def estimate_probability(
         else:
             price_line = ""
 
+        if race_sides and len(race_sides) == 2:
+            race_instruction = (
+                f"IMPORTANT: This is a RACE market. It resolves YES only if "
+                f"'{race_sides[0]}' happens BEFORE '{race_sides[1]}'.\n"
+                f"You must reason about BOTH sides independently:\n"
+                f"  1. How likely is '{race_sides[0]}' to happen within the timeframe? "
+                f"(look for confirmed dates, announcements, or strong signals)\n"
+                f"  2. How likely is '{race_sides[1]}' to arrive first or block it? "
+                f"(look for confirmed release dates, hard deadlines, or official statements)\n"
+                f"A confirmed hard deadline for '{race_sides[1]}' is strong evidence "
+                f"against YES even if '{race_sides[0]}' looks likely in isolation.\n\n"
+            )
+        else:
+            race_instruction = ""
+
         messages = [
             {
                 "role": "system",
@@ -210,6 +261,7 @@ def estimate_probability(
                 "role": "user",
                 "content": (
                     f"Market question: {market_question}\n\n"
+                    f"{race_instruction}"
                     f"{price_line}"
                     f"Evidence:\n{evidence_block}\n\n"
                     'Respond with JSON: {"probability": <float 0.0 to 1.0>,'

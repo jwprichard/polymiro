@@ -26,7 +26,7 @@
 #
 set -euo pipefail
 
-MIROFISH_DIR="/tmp/MiroFish-Offline"
+MIROFISH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/MiroFish-Offline"
 OLLAMA_BIN_DIR="/tmp/ollama_extract/bin"
 OLLAMA_MODELS_DIR="/tmp/ollama_models"
 OLLAMA_ARCHIVE="/tmp/ollama.tar.zst"

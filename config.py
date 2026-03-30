@@ -154,5 +154,9 @@ UPDOWN_SLIPPAGE_TOLERANCE: float = float(os.environ.get("UPDOWN_SLIPPAGE_TOLERAN
 # tradeable until its actual TTL reaches 0.
 UPDOWN_ROTATION_LEAD_TIME_S: float = float(os.environ.get("UPDOWN_ROTATION_LEAD_TIME_S", "10"))
 
+# Tick-level JSONL logging for replay and debugging.
+# Default false — zero overhead when disabled (single bool check per tick).
+UPDOWN_TICK_LOG_ENABLED: bool = os.environ.get("UPDOWN_TICK_LOG_ENABLED", "true").lower() == "true"
+
 # Persistent trade log for the updown strategy.
 UPDOWN_TRADES_FILE: Path = DATA_DIR / "updown_trades.json"

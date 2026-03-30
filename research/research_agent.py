@@ -189,6 +189,19 @@ def process_top_opportunity() -> None:
         except FetcherError as exc:
             logger.warning("%s failed: %s — continuing without its documents.", fetcher_name, exc)
 
+    # Extra fetch for the opposing side of race markets ("X before Y")
+    side_b_paths: list[Path] = []
+    if len(fetch_plan.race_sides) == 2:
+        side_b_query = fetch_plan.race_sides[1]
+        logger.info("Race market detected — fetching side B: %r", side_b_query)
+        fetcher = NewsFetcher(run_id=run_id)
+        try:
+            side_b_paths = fetcher.fetch(side_b_query)
+            doc_paths.extend(side_b_paths)
+            logger.info("NewsFetcher (side B) fetched %d document(s).", len(side_b_paths))
+        except FetcherError as exc:
+            logger.warning("NewsFetcher (side B) failed: %s — continuing.", exc)
+
     logger.info("Total documents fetched: %d", len(doc_paths))
 
     # Step 6: Build knowledge graph via MiroFish -----------------------------
@@ -217,6 +230,8 @@ def process_top_opportunity() -> None:
         question,
         doc_paths=doc_paths,
         current_yes_price=current_yes_price,
+        race_sides=fetch_plan.race_sides or None,
+        side_b_doc_paths=side_b_paths,
     )
     logger.info(
         "Probability estimate: %.4f  evidence_summary=%r",

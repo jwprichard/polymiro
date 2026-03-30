@@ -133,6 +133,7 @@ IMPORTANT NOTES
 
 # ARCHITECTURAL CONSTRAINT: /api/simulation/start must never be called from this module
 
+import logging
 import time
 import requests
 from pathlib import Path
@@ -142,6 +143,10 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import MIROFISH_BASE_URL, MIROFISH_POLL_INTERVAL_S, MIROFISH_POLL_TIMEOUT_S
+
+logger = logging.getLogger(__name__)
+
+_MIN_DOC_CHARS = 80
 
 
 class MiroFishError(RuntimeError):
@@ -169,10 +174,7 @@ def build_graph(question: str, doc_paths: list[Path]) -> str:
         MiroFishError: on any HTTP error, API-level error, missing field,
                        or poll timeout. Never leaks requests.RequestException.
     """
-    bridge = MiroFishBridge()
-    project_id = bridge._generate_ontology(list(doc_paths), question, None)
-    task_id = bridge._start_build(project_id)
-    return bridge._poll_until_complete(task_id)
+    return MiroFishBridge().build_graph(list(doc_paths), question)
 
 
 class MiroFishBridge:
@@ -212,6 +214,12 @@ class MiroFishBridge:
         """
         Upload documents and build a knowledge graph.
 
+        Wraps the three-step flow (project create, ontology upload, poll)
+        in a retry loop with ``max_attempts = 2``.  On the first
+        ``MiroFishError`` the method logs a warning, sleeps 5 s, and
+        retries from Step 1 with a fresh ``project_id``.  A second
+        consecutive failure re-raises the error unchanged.
+
         Args:
             doc_paths:    Absolute paths to text/pdf/md files to upload.
             question:     The market question / simulation_requirement string.
@@ -223,14 +231,57 @@ class MiroFishBridge:
         Raises:
             MiroFishError on API error or timeout.
         """
-        project_id = self._generate_ontology(doc_paths, question, project_name)
-        task_id = self._start_build(project_id)
-        graph_id = self._poll_until_complete(task_id)
-        return graph_id
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            try:
+                project_id = self._generate_ontology(doc_paths, question, project_name)
+                task_id = self._start_build(project_id)
+                graph_id = self._poll_until_complete(task_id)
+                return graph_id
+            except MiroFishError as exc:
+                if attempt < max_attempts:
+                    logger.warning(
+                        "build_graph attempt %d failed: %s — retrying in 5 s",
+                        attempt,
+                        exc,
+                    )
+                    time.sleep(5)
+                else:
+                    raise
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _filter_docs(
+        self, doc_paths: list, min_chars: int = _MIN_DOC_CHARS
+    ) -> list:
+        """Return only paths whose stripped text meets *min_chars*.
+
+        Logs a warning for each skipped path. File handles are never opened
+        for documents that fail the check — only a read-and-close cycle for
+        the length test.
+        """
+        kept: list = []
+        for path in doc_paths:
+            path_str = str(path)
+            try:
+                text = Path(path_str).read_text(errors="replace")
+            except OSError as exc:
+                logger.warning(
+                    "Skipping document %s — unreadable: %s", path_str, exc
+                )
+                continue
+            if len(text.strip()) < min_chars:
+                logger.warning(
+                    "Skipping document %s — stripped length %d < minimum %d chars",
+                    path_str,
+                    len(text.strip()),
+                    min_chars,
+                )
+                continue
+            kept.append(path)
+        return kept
 
     def _generate_ontology(
         self,
@@ -239,6 +290,12 @@ class MiroFishBridge:
         project_name: Optional[str],
     ) -> str:
         """Step 1: upload files + requirement, return project_id."""
+        doc_paths = self._filter_docs(doc_paths)
+        if not doc_paths:
+            raise MiroFishError(
+                "No documents passed the minimum-length filter — aborting ontology upload"
+            )
+
         files = []
         handles = []
         try:

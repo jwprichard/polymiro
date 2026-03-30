@@ -4,6 +4,14 @@ Improvements identified to increase prediction quality and pipeline reliability.
 
 ## Prediction Quality
 
+- [ ] **[P0] Research both sides of binary race markets** — the pipeline fetches documents
+  supporting one interpretation (e.g. "Rihanna hype") but never explicitly researches the
+  competing side (e.g. GTA VI release date). For any market framed as "X before Y", the
+  research prompt and FetchPlan should require evidence on *both* X and Y independently,
+  then reason about the race explicitly. Validated by manual check: system predicted 75%
+  YES on "Rihanna album before GTA VI?" when the correct estimate is ~12% (GTA VI has a
+  hard Nov 19 2026 date; Rihanna has no singles, no rollout, no release date).
+
 - [ ] **Fix probability prompt calibration** (`mirofish/neo4j_query.py:187`) — include the
   market's current YES price, the timeframe from the FetchPlan, and an explicit instruction
   to avoid anchoring to 0.5. Currently the LLM has no price context and no anti-bias nudge.
@@ -37,3 +45,14 @@ Improvements identified to increase prediction quality and pipeline reliability.
   is 0.35 (highest) but the input is the bid-ask spread, not true edge. True mispricing edge
   can't be known until after research. Consider using bid-ask spread purely as a liquidity
   signal and rebalancing weights accordingly.
+
+## Updown Signal Enhancements (not implemented — future iteration)
+
+The following signals are planned additions to the updown package to improve edge
+calculation accuracy. None are implemented yet.
+
+- [ ] **Orderbook imbalance weighting** — measure the bid/ask volume ratio at the top N price levels and scale the raw edge by the imbalance factor, amplifying the signal when heavy orderbook support aligns with the predicted direction.
+- [ ] **Funding rate integration** — ingest the perpetual swap funding rate and add it as a signed offset to the edge, since a deeply negative funding rate implies crowded shorts and increases the probability of an upward move (and vice versa).
+- [ ] **Volatility regime detection (ATR-based)** — compute the Average True Range over a rolling window to classify the current regime as low, normal, or high volatility, then widen or tighten the minimum edge threshold required before the executor acts.
+- [ ] **Liquidation level proximity** — estimate clustered liquidation price levels from open interest data and boost the edge magnitude when the current price is near a liquidation cluster, since cascading liquidations accelerate directional moves.
+- [ ] **Volume spike detection** — compare real-time trade volume against a rolling baseline and flag abnormal spikes as a conviction multiplier on the edge, treating sudden volume surges as confirmation of the predicted directional bias.

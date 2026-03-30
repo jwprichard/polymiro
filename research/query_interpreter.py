@@ -8,6 +8,7 @@ Two code paths:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 
 import config
@@ -29,6 +30,7 @@ class FetchPlan:
     timeframe: str
     sources: list[str]  # e.g. ["wiki", "news_search", "web_search"]
     queries: dict[str, str]  # fetcher_name -> concrete search string
+    race_sides: list[str] = field(default_factory=list)  # [side_a, side_b] for "X before Y" markets
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +60,27 @@ _CRYPTO_KEYWORDS = {"bitcoin", "crypto", "eth", "btc", "ethereum", "solana"}
 _WEATHER_KEYWORDS = {"weather", "rain", "hurricane", "temperature", "storm", "flood"}
 _ELECTION_KEYWORDS = {"election", "vote", "president", "senate", "congress", "ballot"}
 _MARKET_KEYWORDS = {"stock", "market", "nasdaq", "sp500", "fed", "rate", "inflation"}
+
+
+def _detect_race_sides(question: str) -> list[str]:
+    """Return [side_a, side_b] if the question is a 'X before Y' race, else [].
+
+    Handles patterns like:
+        "New Rihanna Album before GTA VI?"
+        "Will X happen before Y?"
+        "Russia-Ukraine Ceasefire before GTA VI?"
+    """
+    if "before" not in question.lower():
+        return []
+    parts = re.split(r'\bbefore\b', question, flags=re.IGNORECASE, maxsplit=1)
+    if len(parts) != 2:
+        return []
+    # Strip leading fluff from side A ("Will ", "New ", "A ", question marks)
+    side_a = re.sub(r'^(will\s+|new\s+|a\s+|an\s+)', '', parts[0].strip(), flags=re.IGNORECASE).strip("? ")
+    side_b = parts[1].strip().strip("? ")
+    if side_a and side_b:
+        return [side_a, side_b]
+    return []
 
 
 def _keyword_plan(question: str) -> FetchPlan:
@@ -90,12 +113,17 @@ def _keyword_plan(question: str) -> FetchPlan:
     short_q = question[:120]  # keep search strings concise
     queries: dict[str, str] = {src: f"{topic} {short_q}" for src in sources}
 
+    race_sides = _detect_race_sides(question)
+    if race_sides:
+        queries["news_search_side_b"] = race_sides[1]
+
     return FetchPlan(
         topic=topic,
         entities=_extract_entities(question),
         timeframe="",
         sources=sources,
         queries=queries,
+        race_sides=race_sides,
     )
 
 
@@ -162,12 +190,17 @@ def _dict_to_fetch_plan(data: dict, question: str) -> FetchPlan:
         if src not in queries:
             queries[src] = f"{topic} {question[:80]}"
 
+    race_sides = _detect_race_sides(question)
+    if race_sides:
+        queries["news_search_side_b"] = race_sides[1]
+
     return FetchPlan(
         topic=topic,
         entities=entities,
         timeframe=timeframe,
         sources=sources,
         queries=queries,
+        race_sides=race_sides,
     )
 
 

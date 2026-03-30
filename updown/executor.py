@@ -45,6 +45,30 @@ _EXIT_SLIPPAGE_MULTIPLIER: float = 2.0
 # Module-level counter for dashboard / heartbeat visibility.
 slippage_rejections: int = 0
 
+# Rolling latency samples accumulated between heartbeat intervals.
+# Each entry is one tick_to_order_latency_ms measurement.
+_latency_samples: list[int] = []
+
+
+def record_latency_sample(latency_ms: int) -> None:
+    """Append a latency measurement for heartbeat reporting."""
+    _latency_samples.append(latency_ms)
+
+
+def drain_latency_stats() -> tuple[int, int, int]:
+    """Drain accumulated latency samples and return (avg_ms, max_ms, count).
+
+    Resets the internal buffer so each heartbeat interval starts fresh.
+    Returns (0, 0, 0) when no samples have been recorded.
+    """
+    if not _latency_samples:
+        return 0, 0, 0
+    avg_ms = sum(_latency_samples) // len(_latency_samples)
+    max_ms = max(_latency_samples)
+    count = len(_latency_samples)
+    _latency_samples.clear()
+    return avg_ms, max_ms, count
+
 
 class ExecutorError(Exception):
     """Raised when order placement fails in a recoverable way."""
@@ -137,6 +161,7 @@ def build_exit_intent(
     current_price: float,
     *,
     no_price: Optional[float] = None,
+    tick_timestamp_ms: int = 0,
 ) -> TradeIntent:
     """Construct a sell-side TradeIntent from an open position and its exit signal.
 
@@ -206,6 +231,7 @@ def build_exit_intent(
         market=snapshot,
         reason=f"EXIT ({exit_signal.reason}): {exit_signal.detail}",
         signal_price=resolved_no_price if (tracked.entry_side and tracked.entry_side.upper() == "NO") else current_price,
+        tick_timestamp_ms=tick_timestamp_ms,
     )
 
 
@@ -219,6 +245,7 @@ async def place_order(
     exit_reason: Optional[str] = None,
     entry_price: Optional[float] = None,
     hold_duration_s: Optional[float] = None,
+    exchange_timestamp_ms: Optional[int] = None,
 ) -> OrderResult:
     """Place (or dry-run) an aggressive limit order on the Polymarket CLOB.
 
@@ -256,6 +283,15 @@ async def place_order(
     """
     now_ms = int(time.time() * 1000)
     trade_id = str(uuid.uuid4())
+
+    # ------------------------------------------------------------------
+    # Tick-to-order latency measurement
+    # ------------------------------------------------------------------
+    tick_to_order_latency_ms: int = 0
+    if intent.tick_timestamp_ms > 0:
+        tick_to_order_latency_ms = now_ms - intent.tick_timestamp_ms
+    logger.info("[LATENCY] tick_to_order=%dms", tick_to_order_latency_ms)
+    record_latency_sample(tick_to_order_latency_ms)
 
     # ------------------------------------------------------------------
     # Slippage guard — reject if price moved too far since signal time
@@ -318,6 +354,8 @@ async def place_order(
             realized_delta=_compute_realized_delta(
                 intent.outcome, entry_price, market_price
             ) if intent.side == "sell" and entry_price is not None else None,
+            exchange_timestamp_ms=exchange_timestamp_ms,
+            tick_to_order_latency_ms=tick_to_order_latency_ms,
         )
         return result
 
@@ -426,6 +464,8 @@ async def place_order(
         realized_delta=_compute_realized_delta(
             intent.outcome, entry_price, market_price
         ) if intent.side == "sell" and entry_price is not None else None,
+        exchange_timestamp_ms=exchange_timestamp_ms,
+        tick_to_order_latency_ms=tick_to_order_latency_ms,
     )
     return result
 
@@ -467,6 +507,8 @@ def _persist_trade(
     exit_price: Optional[float] = None,
     hold_duration_s: Optional[float] = None,
     realized_delta: Optional[float] = None,
+    exchange_timestamp_ms: Optional[int] = None,
+    tick_to_order_latency_ms: int = 0,
 ) -> None:
     """Append a complete trade record to ``UPDOWN_TRADES_FILE``.
 
@@ -484,6 +526,9 @@ def _persist_trade(
     realized_delta:
         For sell trades: profit/loss expressed as price delta
         (exit_price - entry_price for YES side, entry_price - exit_price for NO side).
+    tick_to_order_latency_ms:
+        Milliseconds between the exchange tick timestamp and the order
+        submission wall-clock time.
     """
     record: dict[str, object] = {
         "trade_id": trade_id,
@@ -494,6 +539,8 @@ def _persist_trade(
         "market_price": round(market_price, 6),
         "amount_usdc": intent.size_usdc,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "exchange_timestamp_ms": exchange_timestamp_ms,
+        "tick_to_order_latency_ms": tick_to_order_latency_ms,
         "status": "dry" if dry else ("filled" if result.success else "failed"),
         "dry_mode": dry,
         "order_id": result.order_id,

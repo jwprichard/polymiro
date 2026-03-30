@@ -26,21 +26,27 @@ import aiohttp
 import config
 from updown.binance_ws import BinanceWS
 from updown import executor as _executor
-from updown.executor import build_exit_intent, place_order
-from updown.exit_rules import ExitSignal, check_exit
+from updown.decisions import evaluate_entry, evaluate_exit, evaluate_expiry
+from updown.executor import build_exit_intent, drain_latency_stats, place_order
+from updown.exit_rules import ExitSignal
 from updown.polymarket_ws import PolymarketWSClient
-from updown.signal import compute_signal
 from updown.strategy_config import StrategyConfig
 from updown.retry import retry_async
+from updown.tick_log import TickLogger
 from updown.types import (
-    MarketSnapshot,
+    MarketState,
     OrderResult,
     PriceUpdate,
-    SignalResult,
+    TickContext,
     TradeIntent,
+    get_exchange_now_ms,
+    transition,
 )
 
 logger = logging.getLogger(__name__)
+
+# Module-level tick logger — instantiated once, reused across all ticks.
+_tick_logger = TickLogger()
 
 # ---------------------------------------------------------------------------
 # Queue backpressure
@@ -251,27 +257,32 @@ async def _seed_next_window_market(
 
 @dataclass
 class TrackedMarket:
-    """State for a single tracked Polymarket up/down market."""
+    """State for a single tracked Polymarket up/down market.
+
+    Lifecycle is managed via the ``state`` field (a ``MarketState`` enum)
+    instead of the former ``traded`` / ``pending_order`` / ``last_trade_time``
+    booleans.  Use ``transition()`` from ``updown.types`` for state changes
+    so that invalid transitions are caught immediately.
+    """
 
     condition_id: str
     question: str
     asset_ids: list[str] = field(default_factory=list)
     expiry_time: float = 0.0  # epoch seconds
-    traded: bool = False
-    last_trade_time: float = 0.0  # epoch seconds -- cooldown tracking
-    discovered_at: float = field(default_factory=time.time)
+    state: MarketState = MarketState.IDLE
+    cooldown_until: float = 0.0  # epoch seconds -- active when state == COOLDOWN
+    discovered_at: float = 0.0  # epoch seconds -- caller should supply explicitly
 
     # Position tracking -- populated after a successful buy.
     entry_price: Optional[float] = None
     entry_time: Optional[float] = None  # epoch seconds
     entry_side: Optional[str] = None  # "yes" or "no"
     entry_size_usdc: Optional[float] = None
-    pending_order: bool = False
 
     @property
     def has_open_position(self) -> bool:
-        """True when a trade has been executed and entry details are recorded."""
-        return self.traded and self.entry_price is not None
+        """True when the market is in the ENTERED state."""
+        return self.state == MarketState.ENTERED
 
 
 # Per-market cooldown: one trade per 5-minute window.
@@ -358,7 +369,7 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
                 question=question,
                 asset_ids=[token_id],
                 expiry_time=window_end,
-                traded=False,
+                discovered_at=time.time(),
             )
             tracked_markets[condition_id] = tracked
             polymarket.subscribe(token_id)
@@ -432,8 +443,9 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
                     pct_chg = ""
                     if open_price and open_price > 0:
                         pct_chg = f" chg={((tick.price - open_price) / open_price) * 100:+.3f}%"
+                    avg_lat, max_lat, lat_orders = drain_latency_stats()
                     logger.info(
-                        "[binance] Heartbeat: %d ticks | %d markets | BTC=%.2f%s | qsize=%d drained=%d slippage_rejections=%d",
+                        "[binance] Heartbeat: %d ticks | %d markets | BTC=%.2f%s | qsize=%d drained=%d slippage_rejections=%d avg_latency=%dms max_latency=%dms orders=%d",
                         tick_count,
                         len(tracked_markets),
                         tick.price,
@@ -441,6 +453,9 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
                         price_queue.qsize(),
                         ticks_drained,
                         _executor.slippage_rejections,
+                        avg_lat,
+                        max_lat,
+                        lat_orders,
                     )
                     for cid, tm in tracked_markets.items():
                         for aid in tm.asset_ids:
@@ -460,11 +475,11 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
                                 await polymarket.seed_book_from_rest(aid, http_session)
                             # Base heartbeat line for this market.
                             logger.info(
-                                "[poly]  %s | YES=%.3f NO=%.3f | traded=%s TTL=%.0fs%s",
+                                "[poly]  %s | YES=%.3f NO=%.3f | state=%s TTL=%.0fs%s",
                                 tm.question[26:50],
                                 yp or 0,
                                 np_ or 0,
-                                tm.traded,
+                                tm.state.value,
                                 max(ttl, 0),
                                 stale_tag,
                             )
@@ -537,9 +552,9 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
         logger.info("Final state: %d tracked markets", len(tracked_markets))
         for cid, tm in tracked_markets.items():
             logger.info(
-                "  %s traded=%s question=%s",
+                "  %s state=%s question=%s",
                 cid[:16],
-                tm.traded,
+                tm.state.value,
                 tm.question[:60],
             )
         logger.info("Updown orchestrator stopped.")
@@ -566,10 +581,10 @@ def _handle_market_resolved(
         polymarket.unsubscribe(aid)
 
     logger.info(
-        "[poly] Market resolved and removed: %s -- %s (traded=%s)",
+        "[poly] Market resolved and removed: %s -- %s (state=%s)",
         condition_id[:16],
         tracked.question[:60],
-        tracked.traded,
+        tracked.state.value,
     )
 
 
@@ -588,7 +603,7 @@ async def _rotate_market(
             question=question,
             asset_ids=[token_id],
             expiry_time=window_end,
-            traded=False,
+            discovered_at=time.time(),
         )
         tracked_markets[condition_id] = tracked
         polymarket.subscribe(token_id)
@@ -625,7 +640,7 @@ async def _rotate_market_early(
             question=question,
             asset_ids=[token_id],
             expiry_time=window_end,
-            traded=False,
+            discovered_at=time.time(),
         )
         tracked_markets[condition_id] = tracked
         polymarket.subscribe(token_id)
@@ -640,6 +655,61 @@ async def _rotate_market_early(
 
 
 # ---------------------------------------------------------------------------
+# TickContext assembly
+# ---------------------------------------------------------------------------
+
+
+def _build_tick_contexts(
+    tracked_markets: dict[str, TrackedMarket],
+    polymarket: PolymarketWSClient,
+    tick_price: float,
+    open_price: float,
+    exchange_now_ms: int,
+    strategy_config: StrategyConfig | None,
+) -> dict[str, TickContext]:
+    """Gather current prices and assemble a TickContext per tracked market.
+
+    Markets whose primary asset has no YES price yet are silently skipped
+    (no TickContext is produced).
+    """
+    contexts: dict[str, TickContext] = {}
+
+    for condition_id, tracked in tracked_markets.items():
+        if not tracked.asset_ids:
+            continue
+        asset_id = tracked.asset_ids[0]
+
+        yes_price = polymarket.get_yes_price(asset_id)
+        if yes_price is None:
+            continue
+
+        raw_no_price = polymarket.get_no_price(asset_id)
+        no_price = raw_no_price if raw_no_price is not None else 1.0 - yes_price
+        price_age_ms = polymarket.get_price_age_ms(asset_id)
+
+        contexts[condition_id] = TickContext(
+            tick_price=tick_price,
+            tick_timestamp_ms=exchange_now_ms,
+            open_price=open_price,
+            yes_price=yes_price,
+            no_price=no_price,
+            price_age_ms=price_age_ms if price_age_ms is not None else 999_999,
+            market_id=condition_id,
+            question=tracked.question,
+            token_id=asset_id,
+            expiry_time=tracked.expiry_time,
+            state=tracked.state,
+            entry_price=tracked.entry_price,
+            entry_time=tracked.entry_time,
+            entry_side=tracked.entry_side,
+            entry_size_usdc=tracked.entry_size_usdc,
+            strategy_config=strategy_config,
+        )
+
+    return contexts
+
+
+# ---------------------------------------------------------------------------
 # Tick processing
 # ---------------------------------------------------------------------------
 
@@ -651,39 +721,47 @@ async def _process_tick(
     http_session: aiohttp.ClientSession,
     strategy_config: StrategyConfig | None = None,
 ) -> None:
-    """Evaluate every tracked market against the latest BTC price tick."""
+    """Evaluate every tracked market against the latest BTC price tick.
+
+    Thin orchestrator: gathers prices, calls pure decision functions from
+    ``updown.decisions``, then executes side effects (state transitions,
+    order placement, rotation).
+    """
 
     open_price = binance.get_window_open_price()
     if open_price is None:
-        # Not enough data in the window yet -- skip.
         return
 
     current_price = tick.price
-    now = time.time()
+    exchange_now_ms = get_exchange_now_ms(tick)
+    now = exchange_now_ms / 1000.0
 
-    # Prune expired markets.
-    expired = [
-        cid for cid, tm in tracked_markets.items()
-        if tm.expiry_time > 0 and now > tm.expiry_time
-    ]
-    for cid in expired:
+    # ── 1. Gather prices and assemble TickContext per market ──────────────
+    contexts = _build_tick_contexts(
+        tracked_markets, polymarket,
+        tick_price=current_price, open_price=open_price,
+        exchange_now_ms=exchange_now_ms, strategy_config=strategy_config,
+    )
+
+    # ── 1b. Record tick stream (no-op when UPDOWN_TICK_LOG_ENABLED=false) ─
+    for ctx in contexts.values():
+        _tick_logger.log_tick(ctx)
+
+    # ── 2a. Expiry decisions (pure) ──────────────────────────────────────
+    expired_ids = evaluate_expiry(contexts, now)
+    for cid in expired_ids:
         _handle_market_resolved(cid, tracked_markets, polymarket)
 
-    # If no markets left, rotate to the next 5-minute window.
     if not tracked_markets:
         await _rotate_market(tracked_markets, polymarket, http_session)
 
-    # --- Early rotation: proactively seed next-window market before expiry ---
+    # ── 2b. Early rotation (async HTTP -- stays in orchestrator) ─────────
     lead_time = config.UPDOWN_ROTATION_LEAD_TIME_S
     for _cid, _tm in list(tracked_markets.items()):
         if _tm.expiry_time <= 0:
             continue
         ttl = _tm.expiry_time - now
         if 0 < ttl <= lead_time:
-            # Guard: only rotate if the next-window market is not already tracked.
-            # The next window starts at this market's expiry_time; check whether
-            # any tracked market has that expiry_time + 300 (i.e. belongs to the
-            # next window).
             next_window_end = _tm.expiry_time + 300
             already_seeded = any(
                 t.expiry_time == next_window_end
@@ -692,282 +770,218 @@ async def _process_tick(
             if not already_seeded:
                 logger.info(
                     "[early-rotate] Market %s TTL=%.1fs < threshold=%.1fs — seeding next window",
-                    _cid[:16],
-                    ttl,
-                    lead_time,
+                    _cid[:16], ttl, lead_time,
                 )
                 await _rotate_market_early(_tm, tracked_markets, polymarket, http_session)
 
-    # --- Exit monitoring: check open positions BEFORE new entries ----------
+    # ── 3. Exit decisions (pure) then execute side effects ───────────────
     if strategy_config is not None:
         for condition_id, tracked in list(tracked_markets.items()):
-            if not tracked.has_open_position:
+            ctx = contexts.get(condition_id)
+            if ctx is None:
                 continue
 
-            if tracked.pending_order:
-                logger.debug(
-                    "[exit] Skipping %s: pending order in flight",
-                    condition_id[:16],
-                )
-                continue
-
-            # Determine the current price from the position's perspective.
-            asset_id = tracked.asset_ids[0]
-            yes_price = polymarket.get_yes_price(asset_id)
-            if yes_price is None:
-                continue
-
-            # Reject stale prices -- they must not reach exit rule evaluation.
-            price_age_ms = polymarket.get_price_age_ms(asset_id)
-            if price_age_ms is None or price_age_ms > _MAX_PRICE_AGE_MS:
+            # Staleness gate: reject prices too old for exit evaluation.
+            if ctx.price_age_ms > _MAX_PRICE_AGE_MS:
                 logger.debug(
                     "[exit] Skipping %s: stale price (age=%s ms, max=%d ms)",
-                    condition_id[:16],
-                    price_age_ms,
-                    _MAX_PRICE_AGE_MS,
+                    condition_id[:16], ctx.price_age_ms, _MAX_PRICE_AGE_MS,
                 )
                 continue
 
+            # Determine position-side price (same logic as before).
             if tracked.entry_side and tracked.entry_side.upper() == "NO":
-                real_no = polymarket.get_no_price(asset_id)
-                # Fallback: derive NO price from YES when the order-book
-                # NO price is unavailable (e.g. no NO-token subscription).
-                position_price = real_no if real_no is not None else 1.0 - yes_price
+                position_price = ctx.no_price
             else:
-                position_price = yes_price
+                position_price = ctx.yes_price
 
-            exit_signal = check_exit(
-                config=strategy_config.exit_rules,
-                entry_price=tracked.entry_price,
-                current_price=position_price,
-                entry_time=tracked.entry_time,
-                now=now,
-                side=tracked.entry_side.upper() if tracked.entry_side else "YES",
-            )
-
+            exit_signal = evaluate_exit(ctx, position_price, now)
             if exit_signal is None:
                 continue
 
-            hold_duration_s = now - tracked.entry_time
-
-            delta = position_price - tracked.entry_price
-            logger.info(
-                "[exit] %s triggered for %s: entry=%.4f current=%.4f delta=%+.4f held=%.1fs",
-                exit_signal.reason,
-                condition_id[:16],
-                tracked.entry_price,
-                position_price,
-                delta,
-                hold_duration_s,
+            # ── Execute exit side effects ────────────────────────────
+            await _execute_exit(
+                tracked, condition_id, exit_signal, position_price,
+                ctx, polymarket, now, strategy_config,
             )
 
-            # Build the sell-side intent, passing the real NO price from the
-            # order book so build_exit_intent does not silently assume 1 - yes.
-            exit_no_price = polymarket.get_no_price(asset_id)
-            exit_intent = build_exit_intent(
-                tracked, exit_signal, yes_price, no_price=exit_no_price,
-            )
-
-            if config.UPDOWN_DRY_MODE:
-                logger.info(
-                    "[DRY-EXIT] Would sell %s %s @ %.4f (entry=%.4f, held=%.1fs, reason=%s)",
-                    exit_intent.outcome,
-                    condition_id[:16],
-                    position_price,
-                    tracked.entry_price,
-                    hold_duration_s,
-                    exit_signal.reason,
-                )
-
-            tracked.pending_order = True
-            try:
-                result: OrderResult = await place_order(
-                    exit_intent,
-                    edge=0.0,
-                    implied_prob=position_price,
-                    market_price=position_price,
-                    exit_reason=exit_signal.reason,
-                    entry_price=tracked.entry_price,
-                    hold_duration_s=hold_duration_s,
-                )
-
-                if result.success:
-                    logger.info(
-                        "[exit] Sell executed for %s: order_id=%s filled_price=%.4f reason=%s held=%.1fs",
-                        condition_id[:16],
-                        result.order_id,
-                        result.filled_price or 0.0,
-                        exit_signal.reason,
-                        hold_duration_s,
-                    )
-
-                    # Clear position fields.
-                    tracked.entry_price = None
-                    tracked.entry_time = None
-                    tracked.entry_side = None
-                    tracked.entry_size_usdc = None
-
-                    # Respect allow_reentry setting.
-                    if strategy_config.exit_rules.allow_reentry:
-                        tracked.traded = False
-                    # else: traded remains True -- no re-entry for this market.
-
-                else:
-                    logger.warning(
-                        "[exit] Sell failed for %s: %s",
-                        condition_id[:16],
-                        result.error,
-                    )
-
-            except Exception:
-                logger.exception(
-                    "Unexpected error executing exit sell for %s",
-                    condition_id[:16],
-                )
-            finally:
-                tracked.pending_order = False
-
-    # Evaluate each tracked market.
+    # ── 4. Entry decisions (pure) then execute side effects ──────────────
     for condition_id, tracked in list(tracked_markets.items()):
-        # Cooldown check: at most one trade per 5-min window per market.
-        if tracked.traded and (now - tracked.last_trade_time) < _COOLDOWN_SECONDS:
+        # Auto-expire cooldown.
+        if tracked.state == MarketState.COOLDOWN and now >= tracked.cooldown_until:
+            tracked.state = transition(tracked.state, MarketState.IDLE)
+
+        if tracked.state != MarketState.IDLE:
+            if tracked.state == MarketState.ENTERING:
+                logger.debug("[entry] Skipping %s: entry order in flight", condition_id[:16])
             continue
 
-        if tracked.pending_order:
+        ctx = contexts.get(condition_id)
+        if ctx is None:
+            continue
+
+        # Staleness gate: reject prices too old for signal computation.
+        if ctx.price_age_ms > _MAX_PRICE_AGE_MS:
             logger.debug(
-                "[entry] Skipping %s: pending order in flight",
-                condition_id[:16],
+                "[entry] Skipping %s/%s: stale price (age=%s ms, max=%d ms)",
+                condition_id[:16], ctx.token_id[:12], ctx.price_age_ms, _MAX_PRICE_AGE_MS,
             )
             continue
 
-        for asset_id in tracked.asset_ids:
-            yes_price = polymarket.get_yes_price(asset_id)
-            if yes_price is None:
-                continue
+        intent = evaluate_entry(
+            ctx,
+            btc_current=current_price,
+            btc_open=open_price,
+            threshold=config.UPDOWN_EDGE_THRESHOLD,
+            trade_amount_usdc=config.UPDOWN_TRADE_AMOUNT_USDC,
+            now=now,
+        )
+        if intent is None:
+            continue
 
-            # Reject stale prices -- they must not reach signal computation.
-            price_age_ms = polymarket.get_price_age_ms(asset_id)
-            if price_age_ms is None or price_age_ms > _MAX_PRICE_AGE_MS:
-                logger.debug(
-                    "[entry] Skipping %s/%s: stale price (age=%s ms, max=%d ms)",
-                    condition_id[:16],
-                    asset_id[:12],
-                    price_age_ms,
-                    _MAX_PRICE_AGE_MS,
-                )
-                continue
+        # ── Execute entry side effects ───────────────────────────
+        position_side_price = ctx.no_price if intent.signal.direction == "NO" else ctx.yes_price
+        await _execute_entry(
+            tracked, condition_id, intent, ctx, position_side_price, now,
+            current_price, open_price,
+        )
 
-            # Primary: real NO price from order book.
-            # Fallback: derive from YES price when order-book NO price
-            # is unavailable (e.g. only YES token is subscribed).
-            raw_no_price = polymarket.get_no_price(asset_id)
-            no_price = raw_no_price if raw_no_price is not None else 1.0 - yes_price
-            try:
-                sig = compute_signal(
-                    current_price=current_price,
-                    open_price=open_price,
-                    market_yes_price=yes_price,
-                    threshold=config.UPDOWN_EDGE_THRESHOLD,
-                )
-            except ValueError as exc:
-                logger.warning("Signal computation error: %s", exc)
-                continue
 
-            pct_change = (current_price - open_price) / open_price * 100
-            ttl = tracked.expiry_time - now
-            logger.debug(
-                "[poly/binance] %s | YES=%.3f NO=%.3f spread=%.3f | "
-                "BTC=%.2f open=%.2f chg=%+.3f%% | "
-                "implied=%.3f edge=%+.4f dir=%s trade=%s | TTL=%.0fs",
-                tracked.question[26:50],  # time window portion
-                yes_price,
-                no_price,
-                abs(yes_price - no_price),
-                current_price,
-                open_price,
-                pct_change,
-                sig.implied_probability,
-                sig.edge,
-                sig.direction,
-                sig.should_trade,
-                max(ttl, 0),
-            )
+# ---------------------------------------------------------------------------
+# Side-effect helpers (keep order placement / state mutation isolated)
+# ---------------------------------------------------------------------------
 
-            if not sig.should_trade:
-                continue
 
-            # Build trade intent.
-            # Use position-side price for order pricing and slippage tracking.
-            position_side_price = no_price if sig.direction == "NO" else yes_price
+async def _execute_exit(
+    tracked: TrackedMarket,
+    condition_id: str,
+    exit_signal: ExitSignal,
+    position_price: float,
+    ctx: TickContext,
+    polymarket: PolymarketWSClient,
+    now: float,
+    strategy_config: StrategyConfig,
+) -> None:
+    """Execute an exit order and apply state transitions."""
 
-            snapshot = MarketSnapshot(
-                market_id=condition_id,
-                question=tracked.question,
-                token_id=asset_id,
-                yes_price=yes_price,
-                no_price=no_price,
-                spread=abs(yes_price - no_price),
-                timestamp_ms=tick.timestamp_ms,
-            )
+    hold_duration_s = now - tracked.entry_time
+    delta = position_price - tracked.entry_price
+    logger.info(
+        "[exit] %s triggered for %s: entry=%.4f current=%.4f delta=%+.4f held=%.1fs",
+        exit_signal.reason, condition_id[:16],
+        tracked.entry_price, position_price, delta, hold_duration_s,
+    )
 
-            intent = TradeIntent(
-                market_id=condition_id,
-                token_id=asset_id,
-                side="buy",
-                outcome=sig.direction.lower(),  # "yes" or "no"
-                size_usdc=config.UPDOWN_TRADE_AMOUNT_USDC,
-                signal=sig,
-                market=snapshot,
-                reason=(
-                    f"BTC {sig.direction} momentum | edge={sig.edge:+.4f} "
-                    f"implied={sig.implied_probability:.4f} "
-                    f"market={sig.market_price:.4f}"
-                ),
-                signal_price=position_side_price,
-            )
+    exit_no_price = polymarket.get_no_price(ctx.token_id)
+    exit_intent = build_exit_intent(
+        tracked, exit_signal, ctx.yes_price,
+        no_price=exit_no_price,
+        tick_timestamp_ms=ctx.tick_timestamp_ms,
+    )
 
+    if config.UPDOWN_DRY_MODE:
+        logger.info(
+            "[DRY-EXIT] Would sell %s %s @ %.4f (entry=%.4f, held=%.1fs, reason=%s)",
+            exit_intent.outcome, condition_id[:16],
+            position_price, tracked.entry_price,
+            hold_duration_s, exit_signal.reason,
+        )
+
+    tracked.state = transition(tracked.state, MarketState.EXITING)
+    try:
+        result: OrderResult = await place_order(
+            exit_intent,
+            edge=0.0,
+            implied_prob=position_price,
+            market_price=position_price,
+            exit_reason=exit_signal.reason,
+            entry_price=tracked.entry_price,
+            hold_duration_s=hold_duration_s,
+        )
+
+        if result.success:
             logger.info(
-                "[signal] Triggered for %s: direction=%s edge=%.4f implied=%.4f market=%.4f",
-                condition_id[:16],
-                sig.direction,
-                sig.edge,
-                sig.implied_probability,
-                sig.market_price,
+                "[exit] Sell executed for %s: order_id=%s filled_price=%.4f reason=%s held=%.1fs",
+                condition_id[:16], result.order_id,
+                result.filled_price or 0.0, exit_signal.reason, hold_duration_s,
             )
+            tracked.entry_price = None
+            tracked.entry_time = None
+            tracked.entry_side = None
+            tracked.entry_size_usdc = None
 
-            # Execute trade.
-            tracked.pending_order = True
-            try:
-                result: OrderResult = await place_order(
-                    intent,
-                    edge=sig.edge,
-                    implied_prob=sig.implied_probability,
-                    market_price=position_side_price,
-                )
+            tracked.state = transition(tracked.state, MarketState.COOLDOWN)
+            if strategy_config.exit_rules.allow_reentry:
+                tracked.cooldown_until = now + _COOLDOWN_SECONDS
+            else:
+                tracked.cooldown_until = float("inf")
+        else:
+            logger.warning("[exit] Sell failed for %s: %s", condition_id[:16], result.error)
+            tracked.state = transition(tracked.state, MarketState.IDLE)
+            tracked.state = transition(tracked.state, MarketState.ENTERING)
+            tracked.state = transition(tracked.state, MarketState.ENTERED)
 
-                if result.success:
-                    tracked.traded = True
-                    tracked.last_trade_time = now
-                    tracked.entry_price = result.filled_price
-                    tracked.entry_time = time.time()
-                    tracked.entry_side = intent.outcome  # "yes" or "no"
-                    tracked.entry_size_usdc = intent.size_usdc
-                    logger.info(
-                        "[poly] Trade executed for %s: order_id=%s filled_price=%.4f",
-                        condition_id[:16],
-                        result.order_id,
-                        result.filled_price or 0.0,
-                    )
-                else:
-                    logger.warning(
-                        "[poly] Trade failed for %s: %s",
-                        condition_id[:16],
-                        result.error,
-                    )
+    except Exception:
+        logger.exception("Unexpected error executing exit sell for %s", condition_id[:16])
+        tracked.state = transition(tracked.state, MarketState.IDLE)
+        tracked.state = transition(tracked.state, MarketState.ENTERING)
+        tracked.state = transition(tracked.state, MarketState.ENTERED)
 
-            except Exception:
-                logger.exception(
-                    "Unexpected error executing trade for %s", condition_id[:16]
-                )
-            finally:
-                tracked.pending_order = False
+
+async def _execute_entry(
+    tracked: TrackedMarket,
+    condition_id: str,
+    intent: TradeIntent,
+    ctx: TickContext,
+    position_side_price: float,
+    now: float,
+    btc_current: float,
+    btc_open: float,
+) -> None:
+    """Execute an entry order and apply state transitions."""
+
+    sig = intent.signal
+    pct_change = (btc_current - btc_open) / btc_open * 100
+    ttl = tracked.expiry_time - now
+    logger.debug(
+        "[poly/binance] %s | YES=%.3f NO=%.3f spread=%.3f | "
+        "BTC=%.2f open=%.2f chg=%+.3f%% | "
+        "implied=%.3f edge=%+.4f dir=%s trade=%s | TTL=%.0fs",
+        tracked.question[26:50],
+        ctx.yes_price, ctx.no_price, abs(ctx.yes_price - ctx.no_price),
+        btc_current, btc_open, pct_change,
+        sig.implied_probability, sig.edge, sig.direction, sig.should_trade,
+        max(ttl, 0),
+    )
+    logger.info(
+        "[signal] Triggered for %s: direction=%s edge=%.4f implied=%.4f market=%.4f",
+        condition_id[:16], sig.direction, sig.edge,
+        sig.implied_probability, sig.market_price,
+    )
+
+    tracked.state = transition(tracked.state, MarketState.ENTERING)
+    try:
+        result: OrderResult = await place_order(
+            intent,
+            edge=sig.edge,
+            implied_prob=sig.implied_probability,
+            market_price=position_side_price,
+        )
+
+        if result.success:
+            tracked.state = transition(tracked.state, MarketState.ENTERED)
+            tracked.entry_price = result.filled_price
+            tracked.entry_time = now
+            tracked.entry_side = intent.outcome
+            tracked.entry_size_usdc = intent.size_usdc
+            logger.info(
+                "[poly] Trade executed for %s: order_id=%s filled_price=%.4f",
+                condition_id[:16], result.order_id, result.filled_price or 0.0,
+            )
+        else:
+            tracked.state = transition(tracked.state, MarketState.IDLE)
+            logger.warning("[poly] Trade failed for %s: %s", condition_id[:16], result.error)
+
+    except Exception:
+        logger.exception("Unexpected error executing trade for %s", condition_id[:16])
+        tracked.state = transition(tracked.state, MarketState.IDLE)

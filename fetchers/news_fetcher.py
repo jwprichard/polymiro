@@ -42,7 +42,7 @@ class NewsFetcher(BaseFetcher):
 
         try:
             client = TavilyClient(api_key=config.TAVILY_API_KEY)
-            results = client.search(query=topic, max_results=5)
+            results = client.search(query=topic, max_results=config.NEWS_MAX_RESULTS)
         except Exception as e:
             raise FetcherError(
                 f"NewsFetcher Tavily error for {topic!r}: {e}"
@@ -51,7 +51,7 @@ class NewsFetcher(BaseFetcher):
         topic_slug = topic.lower().replace(" ", "_")[:40]
         paths: list[Path] = []
 
-        for n, r in enumerate(results.get("results", [])[:5]):
+        for n, r in enumerate(results.get("results", [])):
             content = (
                 f"Title: {r.get('title', '')}\n"
                 f"URL: {r.get('url', '')}\n\n"

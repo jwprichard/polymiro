@@ -1,0 +1,14 @@
+# Core pipeline dependencies
+requests
+beautifulsoup4
+tavily-python
+ollama
+neo4j
+
+# Async HTTP and WebSocket
+aiohttp
+websockets
+
+# Configuration
+python-dotenv
+pyyaml

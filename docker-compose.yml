@@ -1,0 +1,74 @@
+services:
+  ollama:
+    image: ollama/ollama:rocm
+    container_name: polymiro-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - video
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    restart: unless-stopped
+
+  neo4j:
+    image: neo4j:5.15
+    container_name: polymiro-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/mirofish
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 2g
+    volumes:
+      - neo4j_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  ollama-pull:
+    image: ollama/ollama:rocm
+    container_name: polymiro-ollama-pull
+    entrypoint: ["ollama", "pull", "${OLLAMA_MODEL:?OLLAMA_MODEL must be set in .env}"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - ollama_data:/root/.ollama
+    depends_on:
+      - ollama
+    restart: "no"
+
+  mirofish:
+    build: ./MiroFish-Offline
+    container_name: polymiro-mirofish
+    ports:
+      - "5001:5001"
+    environment:
+      LLM_API_KEY: ollama
+      LLM_BASE_URL: http://ollama:11434/v1
+      LLM_MODEL_NAME: ${OLLAMA_MODEL:?OLLAMA_MODEL must be set in .env}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: mirofish
+      FLASK_PORT: 5001
+      UV_NO_SYNC: "1"
+    restart: unless-stopped
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+
+volumes:
+  ollama_data:
+  neo4j_data:

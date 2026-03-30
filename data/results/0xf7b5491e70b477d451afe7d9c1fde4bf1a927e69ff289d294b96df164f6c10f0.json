@@ -1,0 +1,9 @@
+{
+  "market_id": "0xf7b5491e70b477d451afe7d9c1fde4bf1a927e69ff289d294b96df164f6c10f0",
+  "question": "Will the Carolina Hurricanes win the 2026 NHL Stanley Cup?",
+  "predicted_probability": 0.1,
+  "edge": -0.015,
+  "evidence_summary": "The evidence provided does not strongly indicate any new information that would significantly alter the current market consensus.",
+  "graph_id": "a4d6ee8f-8127-4d93-a9d5-99ab8501c052",
+  "scanned_at": "2026-03-29T00:30:01Z"
+}

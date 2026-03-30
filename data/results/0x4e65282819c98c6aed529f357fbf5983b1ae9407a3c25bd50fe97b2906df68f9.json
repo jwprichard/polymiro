@@ -1,0 +1,9 @@
+{
+  "market_id": "0x4e65282819c98c6aed529f357fbf5983b1ae9407a3c25bd50fe97b2906df68f9",
+  "question": "Will the Denver Nuggets win the 2026 NBA Finals?",
+  "predicted_probability": 0.5,
+  "edge": 0.415,
+  "evidence_summary": "LLM error \u2014 defaulting to neutral",
+  "graph_id": null,
+  "scanned_at": "2026-03-29T00:12:54Z"
+}
