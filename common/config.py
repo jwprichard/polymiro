@@ -3,13 +3,17 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent / ".env")
+# Repo root is two levels up from common/config.py
+REPO_ROOT: Path = Path(__file__).resolve().parent.parent
+
+load_dotenv(REPO_ROOT / ".env")
 
 # Polymarket CLI binary name/path
 POLYMARKET_CLI_BIN: str = os.environ.get("POLYMARKET_CLI_BIN", "polymarket")
 
-# Shared data directory — always an absolute Path
-DATA_DIR: Path = Path(os.environ.get("DATA_DIR", str(Path(__file__).parent / "data")))
+# Project-specific data directories
+ESTIMATOR_DATA_DIR: Path = REPO_ROOT / "estimator" / "data"
+UPDOWN_DATA_DIR: Path = REPO_ROOT / "updown" / "data"
 
 # LLM provider: "ollama" or "none"
 # Use "none" when running inside Claude Code — the script skips all LLM calls
@@ -38,8 +42,8 @@ NEO4J_USER: str = os.environ.get("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD: str = os.environ.get("NEO4J_PASSWORD", "mirofish")
 
 # Filesystem paths for research artefacts
-FETCHED_DOCS_DIR: Path = Path(os.environ.get("FETCHED_DOCS_DIR", str(Path(__file__).parent / "fetched_docs")))
-RESULTS_DIR: Path = Path(os.environ.get("RESULTS_DIR", str(Path(__file__).parent / "data" / "results")))
+FETCHED_DOCS_DIR: Path = Path(os.environ.get("FETCHED_DOCS_DIR", str(REPO_ROOT / "estimator" / "fetched_docs")))
+RESULTS_DIR: Path = Path(os.environ.get("RESULTS_DIR", str(ESTIMATOR_DATA_DIR / "results")))
 
 # External API keys (empty string = key absent / feature disabled)
 TAVILY_API_KEY: str = os.environ.get("TAVILY_API_KEY", "")
@@ -72,11 +76,11 @@ TRADE_AMOUNT_USDC: float = float(os.environ.get("TRADE_AMOUNT_USDC", "10.0"))
 # Seconds to sleep between sequential price fetches inside the portfolio monitor.
 MONITOR_PRICE_FETCH_DELAY_S: float = float(os.environ.get("MONITOR_PRICE_FETCH_DELAY_S", "0.5"))
 
-# Shared-state files for the execution and monitoring layer, all relative to DATA_DIR.
-PENDING_TRADES_FILE: Path = DATA_DIR / "pending_trades.json"
-DRY_TRADES_FILE: Path = DATA_DIR / "dry_trades.json"
-MONITOR_REPORT_FILE: Path = DATA_DIR / "monitor_report.json"
-PNL_REPORT_FILE: Path = Path(os.environ.get("PNL_REPORT_FILE", str(DATA_DIR / "pnl_report.json")))
+# Shared-state files for the execution and monitoring layer.
+PENDING_TRADES_FILE: Path = ESTIMATOR_DATA_DIR / "pending_trades.json"
+DRY_TRADES_FILE: Path = ESTIMATOR_DATA_DIR / "dry_trades.json"
+MONITOR_REPORT_FILE: Path = ESTIMATOR_DATA_DIR / "monitor_report.json"
+PNL_REPORT_FILE: Path = Path(os.environ.get("PNL_REPORT_FILE", str(ESTIMATOR_DATA_DIR / "pnl_report.json")))
 
 # Gamma API — Polymarket's market-metadata service used for P&L resolution data.
 GAMMA_API_BASE_URL: str = os.environ.get("GAMMA_API_BASE_URL", "https://gamma-api.polymarket.com")
@@ -156,7 +160,10 @@ UPDOWN_ROTATION_LEAD_TIME_S: float = float(os.environ.get("UPDOWN_ROTATION_LEAD_
 
 # Tick-level JSONL logging for replay and debugging.
 # Default false — zero overhead when disabled (single bool check per tick).
-UPDOWN_TICK_LOG_ENABLED: bool = os.environ.get("UPDOWN_TICK_LOG_ENABLED", "true").lower() == "true"
+UPDOWN_TICK_LOG_ENABLED: bool = os.environ.get("UPDOWN_TICK_LOG_ENABLED", "false").lower() == "true"
+
+# Tick-capture-only mode: record ticks but skip all trading logic.
+UPDOWN_TICK_ONLY: bool = os.environ.get("UPDOWN_TICK_ONLY", "false").lower() == "true"
 
 # Persistent trade log for the updown strategy.
-UPDOWN_TRADES_FILE: Path = DATA_DIR / "updown_trades.json"
+UPDOWN_TRADES_FILE: Path = UPDOWN_DATA_DIR / "updown_trades.json"

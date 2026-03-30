@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import config
+from common import config
 
 
 # ---------------------------------------------------------------------------

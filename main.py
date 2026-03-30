@@ -9,7 +9,7 @@ Usage
     python main.py review [--dry-run] [--log DEBUG]
     python main.py monitor [--profile conservative|moderate|aggressive] [--log DEBUG]
     python main.py updown [--dry-run] [--edge-threshold 0.05] [--log DEBUG]
-    python main.py backtest --file <path> [--strategy strategy.yml] [--edge-threshold 0.05] [--output results.json] [--log DEBUG]
+    python main.py backtest --file <path> [--strategy updown/strategies/btc_lag_arbitrage.yml] [--edge-threshold 0.05] [--output results.json] [--log DEBUG]
     python main.py pnl [--reset] [--log DEBUG]
 """
 
@@ -185,9 +185,15 @@ def cmd_updown(args: argparse.Namespace) -> int:
         config.UPDOWN_EDGE_THRESHOLD = args.edge_threshold
         logger.info("Edge threshold overridden to %.4f.", config.UPDOWN_EDGE_THRESHOLD)
 
-    # --no-tick-log: disable tick JSONL recording.
-    if args.no_tick_log:
-        config.UPDOWN_TICK_LOG_ENABLED = False
+    # --collect-tick-logs: enable tick JSONL recording (off by default).
+    if args.collect_tick_logs:
+        config.UPDOWN_TICK_LOG_ENABLED = True
+
+    # --tick-only: capture ticks but skip all trading logic.
+    if args.tick_only:
+        config.UPDOWN_TICK_ONLY = True
+        config.UPDOWN_TICK_LOG_ENABLED = True
+        logger.info("--tick-only mode: recording ticks, trading disabled.")
 
     # Fail fast if live mode but missing API credentials.
     if not config.UPDOWN_DRY_MODE:
@@ -398,14 +404,20 @@ def build_parser() -> argparse.ArgumentParser:
     updown_parser.add_argument(
         "--strategy",
         type=str,
-        default="updown/strategy.yml",
-        help="Path to strategy YAML config file (default: updown/strategy.yml).",
+        default="updown/strategies/btc_lag_arbitrage.yml",
+        help="Path to strategy YAML config file (default: updown/strategies/btc_lag_arbitrage.yml).",
     )
     updown_parser.add_argument(
-        "--no-tick-log",
+        "--collect-tick-logs",
         action="store_true",
         default=False,
-        help="Disable tick-level JSONL logging (enabled by default).",
+        help="Enable tick-level JSONL logging (disabled by default).",
+    )
+    updown_parser.add_argument(
+        "--tick-only",
+        action="store_true",
+        default=False,
+        help="Capture tick data only — no trading, no order execution.",
     )
 
     # --- backtest ---
@@ -422,8 +434,8 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument(
         "--strategy",
         type=str,
-        default="updown/strategy.yml",
-        help="Path to strategy YAML config file (default: updown/strategy.yml).",
+        default="updown/strategies/btc_lag_arbitrage.yml",
+        help="Path to strategy YAML config file (default: updown/strategies/btc_lag_arbitrage.yml).",
     )
     backtest_parser.add_argument(
         "--edge-threshold",

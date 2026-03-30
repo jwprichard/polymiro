@@ -99,3 +99,48 @@
 **Decided:** 2026-03-30
 **Choice:** Use tick log value only. No rolling window reconstruction.
 **Affects:** Task 9
+
+## Percent threshold semantics
+**Decided:** 2026-03-30
+**Choice:** Percentage of entry_price (e.g. 2% of $0.60 entry = $0.012 delta)
+**Affects:** Tasks 2, 4
+
+## allow_reentry location (updated)
+**Decided:** 2026-03-30
+**Choice:** Under `risk` section (risk.allow_reentry)
+**Affects:** Tasks 1, 2, 3
+
+## Required vs optional sections
+**Decided:** 2026-03-30
+**Choice:** All active sections required — fail-fast if any is missing
+**Affects:** Task 2
+
+## Strategy file organization
+**Decided:** 2026-03-30
+**Choice:** Multiple YAML files in `updown/strategies/`, pick one at startup
+**Affects:** Tasks 1, 2, 5
+
+## Async test tooling
+**Decided:** 2026-03-30
+**Choice:** Use pytest-asyncio with function-scoped event loops
+**Affects:** Task 1 (conftest), Task 9, Task 10, Task 13
+
+## py_clob_client in test environment
+**Decided:** 2026-03-30
+**Choice:** Ensure py_clob_client is installed as a dev dependency
+**Affects:** Task 7
+
+## Coverage threshold
+**Decided:** 2026-03-30
+**Choice:** Enforce 80% line coverage via pytest-cov
+**Affects:** Task 14
+
+## Existing test_polymarket_ws.py disposition
+**Decided:** 2026-03-30
+**Choice:** Rewrite to match the current async aiohttp production API
+**Affects:** Task 10
+
+## StrategyConfig fixture source
+**Decided:** 2026-03-30
+**Choice:** Both: in-code factory for unit tests + real_strategy_config fixture loading from YAML for smoke tests
+**Affects:** Task 1, Task 6

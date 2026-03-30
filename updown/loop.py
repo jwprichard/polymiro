@@ -32,7 +32,7 @@ from updown.exit_rules import ExitSignal
 from updown.polymarket_ws import PolymarketWSClient
 from updown.strategy_config import StrategyConfig
 from updown.retry import retry_async
-from updown.tick_log import TickLogger
+from updown.tick_log import TickLogger, TradeEventLogger
 from updown.types import (
     MarketState,
     OrderResult,
@@ -43,8 +43,9 @@ from updown.types import (
     transition,
 )
 
-# Module-level tick logger — instantiated once, reused across all ticks.
+# Module-level loggers — instantiated once, reused across all ticks/events.
 _tick_logger = TickLogger()
+_event_logger = TradeEventLogger()
 
 # ---------------------------------------------------------------------------
 # Queue backpressure
@@ -305,7 +306,7 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
     Parameters
     ----------
     strategy_config:
-        Typed strategy configuration loaded from strategy.yml.  When
+        Typed strategy configuration loaded from strategy YAML.  When
         provided, exit rules are evaluated on every tick for markets
         with open positions.
 
@@ -790,6 +791,10 @@ async def _process_tick(
                 )
                 await _rotate_market_early(_tm, tracked_markets, polymarket, http_session)
 
+    # ── Tick-only mode: market rotation done, skip trading logic ────────
+    if config.UPDOWN_TICK_ONLY:
+        return
+
     # ── 3. Exit decisions (pure) then execute side effects ───────────────
     if strategy_config is not None:
         for condition_id, tracked in list(tracked_markets.items()):
@@ -913,6 +918,7 @@ async def _execute_exit(
             exit_reason=exit_signal.reason,
             entry_price=tracked.entry_price,
             hold_duration_s=hold_duration_s,
+            event_logger=_event_logger,
         )
 
         if result.success:
@@ -982,6 +988,7 @@ async def _execute_entry(
             edge=sig.edge,
             implied_prob=sig.implied_probability,
             market_price=position_side_price,
+            event_logger=_event_logger,
         )
 
         if result.success:

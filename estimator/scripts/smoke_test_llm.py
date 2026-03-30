@@ -3,13 +3,13 @@
 import os, sys, json, dataclasses, pathlib
 
 os.environ.setdefault("LLM_PROVIDER", "none")
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent))
 
 # ---------------------------------------------------------------------------
 # Test 1: QueryInterpreter.interpret() returns a valid FetchPlan
 # ---------------------------------------------------------------------------
 
-from research.query_interpreter import QueryInterpreter, FetchPlan
+from estimator.research.query_interpreter import QueryInterpreter, FetchPlan
 
 plan = QueryInterpreter().interpret("Will Bitcoin exceed $100k before April 2026?")
 # Assert it's a FetchPlan
@@ -26,7 +26,7 @@ print(f"  FetchPlan: {json.dumps(dataclasses.asdict(plan), indent=2)}")
 # Test 2: estimate_probability() returns (float, str) in none mode
 # ---------------------------------------------------------------------------
 
-from mirofish.neo4j_query import estimate_probability
+from estimator.mirofish.neo4j_query import estimate_probability
 
 prob, reasoning = estimate_probability(
     graph_context="Bitcoin price is $95k. ETF inflows strong.",

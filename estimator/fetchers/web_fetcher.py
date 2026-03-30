@@ -14,7 +14,7 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
-from fetchers.base_fetcher import BaseFetcher, FetcherError
+from estimator.fetchers.base_fetcher import BaseFetcher, FetcherError
 
 logger = logging.getLogger(__name__)
 

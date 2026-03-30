@@ -14,8 +14,8 @@ from pathlib import Path
 
 from neo4j import GraphDatabase
 
-import config
-from research._llm_utils import ollama_json_call
+from common import config
+from estimator.research._llm_utils import ollama_json_call
 
 # ---------------------------------------------------------------------------
 # Error class

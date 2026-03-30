@@ -23,10 +23,10 @@ import sys
 from datetime import datetime, timezone
 from typing import Optional
 
-import config
-from scanner.models import Market, Opportunity
-from scanner.polymarket_client import PolymarketClient, PolymarketClientError
-from scanner.opportunity_scorer import score_opportunity
+from common import config
+from estimator.scanner.models import Market, Opportunity
+from estimator.scanner.polymarket_client import PolymarketClient, PolymarketClientError
+from estimator.scanner.opportunity_scorer import score_opportunity
 
 logger = logging.getLogger(__name__)
 
@@ -171,10 +171,10 @@ def run_scan(
     opportunities.sort(key=lambda o: o.opportunity_score, reverse=True)
 
     # Steps 10 & 11: atomic write to DATA_DIR/opportunities.json.
-    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    config.ESTIMATOR_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    tmp_path = config.DATA_DIR / "opportunities.tmp.json"
-    out_path = config.DATA_DIR / "opportunities.json"
+    tmp_path = config.ESTIMATOR_DATA_DIR / "opportunities.tmp.json"
+    out_path = config.ESTIMATOR_DATA_DIR / "opportunities.json"
 
     serializable = [dataclasses.asdict(opp) for opp in opportunities]
 

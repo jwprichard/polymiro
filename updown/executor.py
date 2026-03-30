@@ -244,6 +244,7 @@ async def place_order(
     entry_price: Optional[float] = None,
     hold_duration_s: Optional[float] = None,
     exchange_timestamp_ms: Optional[int] = None,
+    event_logger=None,
 ) -> OrderResult:
     """Place (or dry-run) an aggressive limit order on the Polymarket CLOB.
 
@@ -354,6 +355,7 @@ async def place_order(
             ) if intent.side == "sell" and entry_price is not None else None,
             exchange_timestamp_ms=exchange_timestamp_ms,
             tick_to_order_latency_ms=tick_to_order_latency_ms,
+            event_logger=event_logger,
         )
         return result
 
@@ -464,6 +466,7 @@ async def place_order(
         ) if intent.side == "sell" and entry_price is not None else None,
         exchange_timestamp_ms=exchange_timestamp_ms,
         tick_to_order_latency_ms=tick_to_order_latency_ms,
+        event_logger=event_logger,
     )
     return result
 
@@ -507,6 +510,7 @@ def _persist_trade(
     realized_delta: Optional[float] = None,
     exchange_timestamp_ms: Optional[int] = None,
     tick_to_order_latency_ms: int = 0,
+    event_logger=None,
 ) -> None:
     """Append a complete trade record to ``UPDOWN_TRADES_FILE``.
 
@@ -563,6 +567,13 @@ def _persist_trade(
     except Exception:
         # Persistence failure must not crash the trading loop.
         ulog.executor.exception("Failed to persist trade record %s", trade_id)
+
+    # Write to daily-rotated event log (for audit / lightweight P&L review).
+    if event_logger is not None:
+        try:
+            event_logger.log_event(record)
+        except Exception:
+            ulog.executor.exception("Failed to write event log for %s", trade_id)
 
     # Compute and persist P&L immediately for exit trades.
     if intent.side == "sell" and entry_price is not None and exit_price is not None:

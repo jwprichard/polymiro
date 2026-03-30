@@ -9,7 +9,7 @@ from pathlib import Path
 
 import requests
 
-from fetchers.base_fetcher import BaseFetcher, FetcherError
+from estimator.fetchers.base_fetcher import BaseFetcher, FetcherError
 
 _REST_BASE = "https://en.wikipedia.org/api/rest_v1/page/summary"
 _SEARCH_BASE = "https://en.wikipedia.org/w/api.php"

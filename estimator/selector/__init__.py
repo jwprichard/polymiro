@@ -7,6 +7,6 @@ Public API:
         data/pending_trades.json.  Returns the written candidate list.
 """
 
-from selector.opportunity_selector import run_selector
+from estimator.selector.opportunity_selector import run_selector
 
 __all__ = ["run_selector"]

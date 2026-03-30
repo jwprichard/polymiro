@@ -13,7 +13,7 @@ TradeExecutionError
     missing when DRY_MODE=False).
 """
 
-from trading.trade_executor import (  # noqa: F401
+from estimator.trading.trade_executor import (  # noqa: F401
     TradeExecutionError,
     execute_trade,
     present_for_review,

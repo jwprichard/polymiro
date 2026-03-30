@@ -41,8 +41,8 @@ import re
 import subprocess
 from typing import Any
 
-from config import POLYMARKET_CLI_BIN
-from scanner.models import Market
+from common.config import POLYMARKET_CLI_BIN
+from estimator.scanner.models import Market
 
 logger = logging.getLogger(__name__)
 

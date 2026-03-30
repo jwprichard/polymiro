@@ -11,8 +11,8 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-import config
-from research._llm_utils import ollama_json_call
+from common import config
+from estimator.research._llm_utils import ollama_json_call
 
 logger = logging.getLogger(__name__)
 

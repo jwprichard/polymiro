@@ -139,10 +139,7 @@ import requests
 from pathlib import Path
 from typing import Optional
 
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import MIROFISH_BASE_URL, MIROFISH_POLL_INTERVAL_S, MIROFISH_POLL_TIMEOUT_S
+from common.config import MIROFISH_BASE_URL, MIROFISH_POLL_INTERVAL_S, MIROFISH_POLL_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
 

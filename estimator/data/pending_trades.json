@@ -1,0 +1,101 @@
+[
+  {
+    "market_id": "0xb48621f7eba07b0a3eeabc6afb09ae42490239903997b9d412b0f69aeb040c8b",
+    "question": "BitBoy convicted?",
+    "edge": 0.4755,
+    "confidence": 0.5,
+    "composite_score": 0.23775,
+    "predicted_probability": 0.5,
+    "current_yes_price": null,
+    "direction": "YES",
+    "ranked_at": "2026-03-29T00:55:27Z"
+  },
+  {
+    "market_id": "0x4e65282819c98c6aed529f357fbf5983b1ae9407a3c25bd50fe97b2906df68f9",
+    "question": "Will the Denver Nuggets win the 2026 NBA Finals?",
+    "edge": 0.415,
+    "confidence": 0.5,
+    "composite_score": 0.2075,
+    "predicted_probability": 0.5,
+    "current_yes_price": null,
+    "direction": "YES",
+    "ranked_at": "2026-03-29T00:55:27Z"
+  },
+  {
+    "market_id": "0xd8c3fff562711af557abca5e7367dbb892b1d79419b039b6f185e49f21ec6f71",
+    "question": "Will Italy qualify for the 2026 FIFA World Cup?",
+    "edge": -0.19500000000000006,
+    "confidence": 0.7,
+    "composite_score": 0.1365,
+    "predicted_probability": 0.58,
+    "current_yes_price": null,
+    "direction": "NO",
+    "ranked_at": "2026-03-29T00:55:27Z"
+  },
+  {
+    "market_id": "0x1fad72fae204143ff1c3035e99e7c0f65ea8d5cd9bd1070987bd1a3316f772be",
+    "question": "New Rihanna Album before GTA VI?",
+    "edge": 0.12,
+    "confidence": 0.65,
+    "composite_score": 0.078,
+    "predicted_probability": 0.75,
+    "current_yes_price": null,
+    "direction": "YES",
+    "ranked_at": "2026-03-29T00:55:27Z"
+  },
+  {
+    "market_id": "0x50ddb9cd80d5c271664a2ebb7fcaed1d0a148d82c8e8d314d830f75a944c3dcc",
+    "question": "New Playboi Carti Album before GTA VI?",
+    "edge": 0.09999999999999998,
+    "confidence": 0.75,
+    "composite_score": 0.075,
+    "predicted_probability": 0.75,
+    "current_yes_price": null,
+    "direction": "YES",
+    "ranked_at": "2026-03-29T00:55:27Z"
+  },
+  {
+    "market_id": "0x61eb9153c67924f13fd102a324be284f335672ea1fdb07d48af27a8cd03536be",
+    "question": "Will Sweden qualify for the 2026 FIFA World Cup?",
+    "edge": -0.14500000000000002,
+    "confidence": 0.5,
+    "composite_score": 0.0725,
+    "predicted_probability": 0.5,
+    "current_yes_price": null,
+    "direction": "NO",
+    "ranked_at": "2026-03-29T00:55:27Z"
+  },
+  {
+    "market_id": "0xbd9068da0f92022747bdad7a7d522c2f8bec81f0eb61c233eb94b301b3b4c62b",
+    "question": "Will Poland qualify for the 2026 FIFA World Cup?",
+    "edge": 0.135,
+    "confidence": 0.5,
+    "composite_score": 0.0675,
+    "predicted_probability": 0.5,
+    "current_yes_price": null,
+    "direction": "YES",
+    "ranked_at": "2026-03-29T00:55:27Z"
+  },
+  {
+    "market_id": "0x22e7b5e35423e76842dd3a5e1a21d13793811080d5e7b2896d0c001bd5e97d54",
+    "question": "Will the Oklahoma City Thunder win the 2026 NBA Finals?",
+    "edge": 0.125,
+    "confidence": 0.5,
+    "composite_score": 0.0625,
+    "predicted_probability": 0.5,
+    "current_yes_price": null,
+    "direction": "YES",
+    "ranked_at": "2026-03-29T00:55:27Z"
+  },
+  {
+    "market_id": "0x84f8b70331323c2fba97d7ceaa9a35fb645a0770d0dbff169d07f24f376766e9",
+    "question": "Trump out as President before GTA VI?",
+    "edge": -0.06000000000000005,
+    "confidence": 0.75,
+    "composite_score": 0.045,
+    "predicted_probability": 0.475,
+    "current_yes_price": null,
+    "direction": "NO",
+    "ranked_at": "2026-03-29T00:55:27Z"
+  }
+]

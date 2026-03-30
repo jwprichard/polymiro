@@ -9,9 +9,9 @@ import pathlib
 os.environ.setdefault("LLM_PROVIDER", "none")
 
 # Add project root to path
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent.parent))
 
-import config  # noqa: E402
+from common import config  # noqa: E402
 
 PASS = "PASS"
 FAIL_PREFIX = "FAIL"
@@ -35,7 +35,7 @@ def check(name, fn):
 # ---------------------------------------------------------------------------
 
 def _check_opportunities_file():
-    opp_file = config.DATA_DIR / "opportunities.json"
+    opp_file = config.ESTIMATOR_DATA_DIR / "opportunities.json"
     assert opp_file.exists(), f"opportunities.json not found at {opp_file}"
     raw = opp_file.read_text(encoding="utf-8")
     assert raw.strip(), "opportunities.json is empty"
@@ -54,7 +54,7 @@ check("data/opportunities.json is non-empty and parseable", _check_opportunities
 
 def _check_process_top_opportunity():
     # Import here so LLM_PROVIDER=none is already set when the module loads.
-    from research.research_agent import process_top_opportunity  # noqa: PLC0415
+    from estimator.research.research_agent import process_top_opportunity  # noqa: PLC0415
 
     # process_top_opportunity() calls sys.exit(0) when it finishes successfully
     # (or when there is nothing left to do).  We catch SystemExit and treat
@@ -127,7 +127,7 @@ def _check_edge_calculation():
     predicted_probability = _first_result["predicted_probability"]
     stored_edge = _first_result["edge"]
 
-    opp_file = config.DATA_DIR / "opportunities.json"
+    opp_file = config.ESTIMATOR_DATA_DIR / "opportunities.json"
     opportunities = json.loads(opp_file.read_text(encoding="utf-8"))
 
     matching = [o for o in opportunities if o.get("market_id") == market_id]
@@ -159,7 +159,7 @@ def _check_queue_contains_market_id():
     assert _first_result is not None, "No result loaded — check 3 must pass first"
 
     market_id = _first_result["market_id"]
-    queue_file = config.DATA_DIR / "research_queue.json"
+    queue_file = config.ESTIMATOR_DATA_DIR / "research_queue.json"
     assert queue_file.exists(), f"research_queue.json not found at {queue_file}"
 
     queue_data = json.loads(queue_file.read_text(encoding="utf-8"))

@@ -14,17 +14,41 @@ MiroFish is used **only for knowledge graph construction** (documents → Neo4j)
 documents → MiroFish (POST /ontology/generate) → Neo4j graph → LLM probability query → PredictionResult
 ```
 
-## Planned Project Structure
+## Project Structure
 
 ```
-polymarket-mirofish/
-├── scanner/          # Polymarket scanning + opportunity scoring
-├── fetchers/         # Data connectors (weather, news, wiki, crypto, macro)
-├── mirofish/         # MiroFish API bridge + Neo4j query layer
-├── research/         # Research agent loop + topic→fetcher routing
-├── data/             # Shared state: opportunities.json, research_queue.json, results/
-├── config.py         # API keys, service URLs, intervals
-└── main.py           # Entry point / orchestrator
+polymiro/
+├── estimator/            # Probability estimation pipeline
+│   ├── scanner/          # Polymarket scanning + opportunity scoring
+│   ├── fetchers/         # Data connectors (weather, news, wiki, crypto, macro)
+│   ├── mirofish/         # MiroFish API bridge + Neo4j query layer
+│   ├── research/         # Research agent loop + topic→fetcher routing
+│   ├── selector/         # Market selection logic
+│   ├── trading/          # Trade execution
+│   ├── monitor/          # Monitoring and alerting
+│   ├── scripts/          # Utility scripts
+│   ├── fetched_docs/     # Downloaded research documents
+│   ├── MiroFish-Offline/ # Offline MiroFish tooling
+│   ├── mirofish-docker/  # MiroFish Docker configuration
+│   ├── tests/            # Estimator test suite
+│   └── data/             # Estimator state: opportunities.json, research_queue.json, results/
+├── updown/               # Binary (up/down) market trading bot
+│   ├── loop.py           # Main trading loop
+│   ├── executor.py       # Order execution
+│   ├── signal.py         # Signal generation
+│   ├── decisions.py      # Decision state machine
+│   ├── exit_rules.py     # Position exit logic
+│   ├── replay.py         # Tick replay harness
+│   ├── tick_log.py       # Tick logging
+│   ├── strategy_config.py # Strategy configuration loader
+│   ├── strategy.yml      # Strategy parameters
+│   ├── pnl/              # P&L tracking
+│   ├── tests/            # Updown test suite
+│   └── data/             # Updown state: ticks, PnL logs
+├── common/               # Shared utilities
+│   ├── config.py         # API keys, service URLs, ESTIMATOR_DATA_DIR, UPDOWN_DATA_DIR
+│   └── io.py             # Shared I/O helpers
+└── main.py               # Entry point / orchestrator
 ```
 
 ## Local Services (Already Running)
@@ -36,12 +60,19 @@ polymarket-mirofish/
 
 ## Shared State Contract
 
-Agents communicate via JSON files in `data/`:
+Each package maintains its own data directory:
+
+**Estimator** (`estimator/data/`):
 - `opportunities.json` — scanner writes, research agents consume
 - `research_queue.json` — tracks which markets have been researched
 - `results/{market_id}.json` — per-market PredictionResult output
 
-The `edge` field in results = our predicted probability − Polymarket current price. Positive = underpriced YES, negative = overpriced YES.
+**Updown** (`updown/data/`):
+- Tick logs, PnL records, and trading state
+
+The `edge` field in estimator results = our predicted probability − Polymarket current price. Positive = underpriced YES, negative = overpriced YES.
+
+Data directory paths are configured in `common/config.py` via `ESTIMATOR_DATA_DIR` and `UPDOWN_DATA_DIR`.
 
 ## MiroFish API Usage
 
@@ -64,7 +95,7 @@ LIMIT 200
 
 ## Fetcher Connectors
 
-Each fetcher returns plain-text documents written to `./fetched_docs/{run_id}/`. Implemented as subclasses of `base_fetcher.py`.
+Each fetcher returns plain-text documents written to `estimator/fetched_docs/{run_id}/`. Implemented as subclasses of `estimator/fetchers/base_fetcher.py`.
 
 | Connector | Source | Auth |
 |---|---|---|
@@ -75,17 +106,17 @@ Each fetcher returns plain-text documents written to `./fetched_docs/{run_id}/`.
 | CryptoFetcher | CoinGecko | None |
 | MacroFetcher | FRED API | Free key |
 
-Topic → fetcher routing lives in `research/source_router.py`.
+Topic → fetcher routing lives in `estimator/research/source_router.py`.
 
 ## Build Order
 
 Build in this sequence to validate each layer before adding the next:
-1. `polymarket_client.py` + scanner shell
-2. `opportunities.json` writer
+1. `estimator/scanner/polymarket_client.py` + scanner shell
+2. `estimator/data/opportunities.json` writer
 3. `WeatherFetcher` + MiroFish bridge (graph only, end-to-end)
-4. `neo4j_query.py` probability layer
-5. `query_interpreter.py` (LLM → FetchPlan)
-6. Full `research_agent.py` loop
+4. `estimator/mirofish/neo4j_query.py` probability layer
+5. `estimator/research/query_interpreter.py` (LLM → FetchPlan)
+6. Full `estimator/research/research_agent.py` loop
 7. Remaining fetchers
 8. OpenViking integration (Phase 5, future)
 

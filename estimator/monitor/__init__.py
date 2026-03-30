@@ -19,7 +19,7 @@ from __future__ import annotations
 
 def __getattr__(name: str):
     if name in ("run_monitor", "MonitorError"):
-        from monitor import portfolio_monitor as _pm  # noqa: PLC0415
+        from estimator.monitor import portfolio_monitor as _pm  # noqa: PLC0415
         return getattr(_pm, name)
     raise AttributeError(f"module 'monitor' has no attribute {name!r}")
 

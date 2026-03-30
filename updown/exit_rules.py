@@ -60,33 +60,65 @@ def check_exit(
     # passes the NO price for NO positions), so profit/loss direction is the
     # same regardless of side: price up = profit, price down = loss.
     if config.stop_loss.enabled:
-        max_loss = config.stop_loss.max_loss_delta
         loss = entry_price - current_price
 
+        # Delta-based stop loss (evaluated first)
+        max_loss = config.stop_loss.max_loss_delta
         if loss >= max_loss:
             return ExitSignal(
                 reason="stop_loss",
                 detail=(
-                    f"Stop loss triggered: loss delta {loss:.4f} >= "
-                    f"max {max_loss:.4f} (side={side}, "
+                    f"Stop loss triggered (delta): loss {loss:.4f} >= "
+                    f"max delta {max_loss:.4f} (side={side}, "
                     f"entry={entry_price:.4f}, current={current_price:.4f})"
                 ),
             )
 
+        # Percent-based stop loss
+        sl_pct = config.stop_loss.percent
+        if sl_pct is not None:
+            max_loss_abs = entry_price * sl_pct.max_loss_pct
+            if loss >= max_loss_abs:
+                return ExitSignal(
+                    reason="stop_loss",
+                    detail=(
+                        f"Stop loss triggered (percent): loss {loss:.4f} >= "
+                        f"{sl_pct.max_loss_pct:.2%} of entry "
+                        f"({max_loss_abs:.4f}) (side={side}, "
+                        f"entry={entry_price:.4f}, current={current_price:.4f})"
+                    ),
+                )
+
     # -- Take profit ---------------------------------------------------------
     if config.take_profit.enabled:
-        target = config.take_profit.target_delta
         profit = current_price - entry_price
 
+        # Delta-based take profit (evaluated first)
+        target = config.take_profit.target_delta
         if profit >= target:
             return ExitSignal(
                 reason="take_profit",
                 detail=(
-                    f"Take profit triggered: profit delta {profit:.4f} >= "
-                    f"target {target:.4f} (side={side}, "
+                    f"Take profit triggered (delta): profit {profit:.4f} >= "
+                    f"target delta {target:.4f} (side={side}, "
                     f"entry={entry_price:.4f}, current={current_price:.4f})"
                 ),
             )
+
+        # Percent-based take profit
+        tp_pct = config.take_profit.percent
+        if tp_pct is not None:
+            target_abs = entry_price * tp_pct.target_pct
+            if profit >= target_abs:
+                return ExitSignal(
+                    reason="take_profit",
+                    detail=(
+                        f"Take profit triggered (percent): profit {profit:.4f} >= "
+                        f"{tp_pct.target_pct:.2%} of entry "
+                        f"({target_abs:.4f}) (side={side}, "
+                        f"entry={entry_price:.4f}, current={current_price:.4f})"
+                    ),
+                )
 
     # -- Time exit -----------------------------------------------------------
     if config.time_exit.enabled:

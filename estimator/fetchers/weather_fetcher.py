@@ -9,7 +9,7 @@ from pathlib import Path
 
 import requests
 
-from fetchers.base_fetcher import BaseFetcher, FetcherError
+from estimator.fetchers.base_fetcher import BaseFetcher, FetcherError
 
 _GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 _FORECAST_URL = "https://api.open-meteo.com/v1/forecast"

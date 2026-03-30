@@ -27,9 +27,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-import config
-from utils.io import write_json_atomic
-from scanner.polymarket_client import PolymarketClient, PolymarketClientError
+from common import config
+from common.io import write_json_atomic
+from estimator.scanner.polymarket_client import PolymarketClient, PolymarketClientError
 
 # ---------------------------------------------------------------------------
 # Module-level logger — writes to stderr only (no stdout pollution)

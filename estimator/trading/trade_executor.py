@@ -21,8 +21,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-import config
-from utils.io import atomic_append_to_json_list
+from common import config
+from common.io import atomic_append_to_json_list
 
 
 # ---------------------------------------------------------------------------

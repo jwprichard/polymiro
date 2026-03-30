@@ -18,18 +18,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import config
-import mirofish
-from fetchers import FetcherError, NewsFetcher, WebFetcher, WeatherFetcher, WikiFetcher
-from mirofish import MiroFishError
-from mirofish.neo4j_query import (
+from common import config
+import estimator.mirofish as mirofish
+from estimator.fetchers import FetcherError, NewsFetcher, WebFetcher, WeatherFetcher, WikiFetcher
+from estimator.mirofish import MiroFishError
+from estimator.mirofish.neo4j_query import (
     Neo4jQueryError,
     estimate_probability,
     format_graph_as_context,
     query_graph,
 )
-from research.query_interpreter import QueryInterpreter
-from research.source_router import route
+from estimator.research.query_interpreter import QueryInterpreter
+from estimator.research.source_router import route
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,8 +52,8 @@ _FETCHER_CLASSES = {
 # Shared-state file paths
 # ---------------------------------------------------------------------------
 
-_OPPORTUNITIES_FILE = config.DATA_DIR / "opportunities.json"
-_QUEUE_FILE = config.DATA_DIR / "research_queue.json"
+_OPPORTUNITIES_FILE = config.ESTIMATOR_DATA_DIR / "opportunities.json"
+_QUEUE_FILE = config.ESTIMATOR_DATA_DIR / "research_queue.json"
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +277,13 @@ def process_top_opportunity() -> None:
         logger.warning("Could not update research_queue.json: %s", exc)
 
     sys.exit(0)
+
+
+# ---------------------------------------------------------------------------
+# Public alias used by main.py
+# ---------------------------------------------------------------------------
+
+run_research = process_top_opportunity
 
 
 # ---------------------------------------------------------------------------

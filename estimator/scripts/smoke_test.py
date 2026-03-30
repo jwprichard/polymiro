@@ -21,11 +21,11 @@ from pathlib import Path
 
 # Ensure the project root is on sys.path regardless of where this script is
 # invoked from.
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-import config  # noqa: E402 — must come after sys.path insert
-from scanner.polymarket_client import PolymarketClientError  # noqa: E402
-from scanner.scanner_agent import run_scan  # noqa: E402
+from common import config  # noqa: E402 — must come after sys.path insert
+from estimator.scanner.polymarket_client import PolymarketClientError  # noqa: E402
+from estimator.scanner.scanner_agent import run_scan  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -100,7 +100,7 @@ def main() -> int:
     # 2. Validate data/opportunities.json schema
     # ------------------------------------------------------------------
     print("--- Validating schema ---")
-    out_path = config.DATA_DIR / "opportunities.json"
+    out_path = config.ESTIMATOR_DATA_DIR / "opportunities.json"
 
     try:
         with open(out_path, encoding="utf-8") as fh:
@@ -149,7 +149,7 @@ def main() -> int:
     # 4. Verify atomic write (no tmp file left behind)
     # ------------------------------------------------------------------
     print("--- Checking atomic write ---")
-    tmp_path = config.DATA_DIR / "opportunities.tmp.json"
+    tmp_path = config.ESTIMATOR_DATA_DIR / "opportunities.tmp.json"
     if tmp_path.exists():
         print("ATOMIC WRITE FAILED: tmp file still present")
         exit_code = 1

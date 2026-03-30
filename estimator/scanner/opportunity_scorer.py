@@ -16,8 +16,8 @@ import math
 from datetime import datetime, timezone
 from typing import Optional
 
-import config
-from scanner.models import Market
+from common import config
+from estimator.scanner.models import Market
 
 # ---------------------------------------------------------------------------
 # Module-level weight constants

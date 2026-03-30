@@ -1,0 +1,105 @@
+# btc_lag_arbitrage.yml — BTC 5-min up/down lag arbitrage strategy
+#
+# Sections: strategy, signals, entry, exit, risk, execution, filters, timing
+# Commented-out sections: data_sources, metrics
+
+# -- Strategy metadata --------------------------------------------------------
+strategy:
+  name: btc_lag_arbitrage
+  type: momentum_lag
+  version: 1
+  description: >
+    Exploits the lag between BTC spot price movements and Polymarket
+    5-minute up/down market pricing. Enters when spot momentum diverges
+    from current market odds.
+
+# -- Signal parameters --------------------------------------------------------
+signals:
+  type: momentum
+  lookback_seconds: 300
+  smoothing: ema
+  momentum_threshold: 0.005
+  confirmation_ticks: 2
+
+# -- Entry conditions ---------------------------------------------------------
+entry:
+  min_edge: 0.05
+  min_confidence: 0.6
+  require_signal_confirmation: true
+  max_entry_price: 0.95
+  min_entry_price: 0.05
+
+# -- Exit conditions ----------------------------------------------------------
+exit:
+  time_exit:
+    enabled: true
+    max_hold_seconds: 240
+
+# -- Risk management ----------------------------------------------------------
+risk:
+  position_size_usdc: 5.0
+  max_concurrent_positions: 1
+
+  stop_loss:
+    enabled: true
+    delta:
+      max_loss_delta: 0.04
+    percent:
+      max_loss_pct: 0.08
+
+  take_profit:
+    enabled: true
+    delta:
+      target_delta: 0.06
+    percent:
+      target_pct: 0.12
+
+  allow_reentry: false
+
+# -- Execution parameters -----------------------------------------------------
+execution:
+  order_type: limit
+  slippage_tolerance: 0.01
+  retry_attempts: 2
+  retry_delay_seconds: 1.0
+
+# -- Market filters -----------------------------------------------------------
+filters:
+  market_type: btc_5min_updown
+  min_liquidity_usdc: 50.0
+  max_spread: 0.08
+  active_only: true
+
+# -- Timing parameters --------------------------------------------------------
+timing:
+  poll_interval_seconds: 5
+  market_rotation_lead_seconds: 30
+  cooldown_after_exit_seconds: 10
+
+# -- Data sources (future) ----------------------------------------------------
+# data_sources:
+#   spot_price:
+#     provider: binance
+#     symbol: BTCUSDT
+#     interval: 1s
+#   polymarket:
+#     ws_endpoint: wss://ws-subscriptions-clob.polymarket.com/ws/market
+#     rest_fallback: true
+
+# -- Metrics / observability (future) -----------------------------------------
+# metrics:
+#   enabled: false
+#   export_format: prometheus
+#   labels:
+#     strategy: btc_lag_arbitrage
+#     env: production
+#   counters:
+#     - trades_entered
+#     - trades_exited
+#     - stop_loss_triggered
+#     - take_profit_triggered
+#     - time_exit_triggered
+#   gauges:
+#     - current_pnl
+#     - position_age_seconds
+#     - edge_at_entry

@@ -16,7 +16,7 @@ except ImportError:
     _TAVILY_AVAILABLE = False
     TavilyClient = None
 
-from fetchers.base_fetcher import BaseFetcher, FetcherError
+from estimator.fetchers.base_fetcher import BaseFetcher, FetcherError
 
 
 class NewsFetcher(BaseFetcher):
@@ -30,7 +30,7 @@ class NewsFetcher(BaseFetcher):
         key is absent.  Raises :class:`~fetchers.base_fetcher.FetcherError` for
         unexpected API failures.
         """
-        import config
+        from common import config
 
         if not _TAVILY_AVAILABLE:
             logging.warning("NewsFetcher: tavily-python not installed, skipping")

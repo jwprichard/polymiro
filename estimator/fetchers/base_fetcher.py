@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-import config
+from common import config
 
 
 class FetcherError(RuntimeError):

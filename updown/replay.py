@@ -6,13 +6,14 @@ aggregate statistics suitable for backtesting strategy changes.
 
 Usage::
 
-    engine = ReplayEngine.load("data/updown_ticks_2026-03-29.jsonl")
+    engine = ReplayEngine.load("updown/data/updown_ticks_2026-03-29.jsonl")
     engine.run()
     print(json.dumps(engine.summary(), indent=2))
 """
 
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import sys
@@ -86,8 +87,8 @@ class ReplayEngine:
     ticks:
         List of tick dicts as produced by ``TickLogger._tick_to_record``.
     strategy_config:
-        Strategy configuration.  If ``None``, loads ``strategy.yml``
-        from the current directory.
+        Strategy configuration.  If ``None``, loads the default strategy
+        from ``updown/strategies/btc_lag_arbitrage.yml``.
     edge_threshold:
         Overrides ``config.UPDOWN_EDGE_THRESHOLD`` for this replay.
     trade_amount_usdc:
@@ -111,13 +112,13 @@ class ReplayEngine:
         if strategy_config is not None:
             self._strategy = strategy_config
         else:
-            self._strategy = load_strategy_config(Path("strategy.yml"))
+            self._strategy = load_strategy_config()
 
         # Resolve edge threshold.
         if edge_threshold is not None:
             self._edge_threshold = edge_threshold
         else:
-            import config
+            from common import config
             self._edge_threshold = config.UPDOWN_EDGE_THRESHOLD
 
         self._trade_amount = trade_amount_usdc
@@ -158,7 +159,11 @@ class ReplayEngine:
         if not filepath.exists():
             raise FileNotFoundError(f"File not found: {filepath}")
 
-        raw_text = filepath.read_text(encoding="utf-8").lstrip()
+        if filepath.suffix == ".gz":
+            with gzip.open(filepath, "rt", encoding="utf-8") as f:
+                raw_text = f.read().lstrip()
+        else:
+            raw_text = filepath.read_text(encoding="utf-8").lstrip()
         if not raw_text:
             raise ValueError(f"File is empty: {filepath}")
 
@@ -388,6 +393,9 @@ def _tick_to_context(
     strategy: StrategyConfig,
 ) -> TickContext:
     """Build a TickContext from a tick record dict and current position state."""
+    # Position state comes from the replay engine's own tracking, not from
+    # the tick record.  Old tick files may contain these fields but they are
+    # ignored — the replay engine is the source of truth.
     return TickContext(
         tick_price=tick.get("price", 0.0),
         tick_timestamp_ms=tick.get("timestamp_ms", 0),
