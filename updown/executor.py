@@ -12,7 +12,6 @@ the full trade history.
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 import uuid
 from datetime import datetime, timezone
@@ -22,15 +21,14 @@ from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
 from py_clob_client.client import ClobClient
 from py_clob_client.order_builder.constants import BUY, SELL
 
-import config
+from common import config
+from common.log import ulog
 from updown.exit_rules import ExitSignal
 from updown.types import MarketSnapshot, OrderResult, SignalResult, TradeIntent
-from utils.io import atomic_append_to_json_list
+from common.io import atomic_append_to_json_list
 
 if TYPE_CHECKING:
     from updown.loop import TrackedMarket
-
-logger = logging.getLogger(__name__)
 
 # Polygon mainnet chain ID — required by py-clob-client for signing.
 _POLYGON_CHAIN_ID = 137
@@ -290,7 +288,7 @@ async def place_order(
     tick_to_order_latency_ms: int = 0
     if intent.tick_timestamp_ms > 0:
         tick_to_order_latency_ms = now_ms - intent.tick_timestamp_ms
-    logger.info("[LATENCY] tick_to_order=%dms", tick_to_order_latency_ms)
+    ulog.latency.info("tick_to_order=%dms", tick_to_order_latency_ms)
     record_latency_sample(tick_to_order_latency_ms)
 
     # ------------------------------------------------------------------
@@ -303,7 +301,7 @@ async def place_order(
             tolerance *= _EXIT_SLIPPAGE_MULTIPLIER
         if check_slippage(intent.signal_price, market_price, tolerance):
             delta = abs(intent.signal_price - market_price)
-            logger.warning(
+            ulog.executor.warning(
                 "Slippage rejected %s %s %s: signal_price=%.4f execution_price=%.4f "
                 "delta=%.4f tolerance=%.4f",
                 intent.side,
@@ -326,8 +324,8 @@ async def place_order(
     # Dry mode — no network call, immediate synthetic result
     # ------------------------------------------------------------------
     if config.UPDOWN_DRY_MODE:
-        logger.info(
-            "[DRY] %s %s %s %.4f USDC @ %.4f  (edge=%.4f)",
+        ulog.dry.info(
+            "%s %s %s %.4f USDC @ %.4f  (edge=%.4f)",
             intent.side,
             intent.outcome,
             intent.token_id[:12],
@@ -402,8 +400,8 @@ async def place_order(
             timestamp_ms=now_ms,
         )
 
-        logger.info(
-            "[LIVE] %s %s %s %.4f USDC @ %.4f → %s (%s)",
+        ulog.live.info(
+            "%s %s %s %.4f USDC @ %.4f → %s (%s)",
             intent.side,
             intent.outcome,
             intent.token_id[:12],
@@ -420,7 +418,7 @@ async def place_order(
         raise
 
     except asyncio.TimeoutError:
-        logger.error(
+        ulog.executor.error(
             "Order timed out after %.1fs for %s %s %s",
             timeout_s,
             intent.side,
@@ -439,7 +437,7 @@ async def place_order(
         # failures, or any other transient issue.  We log and return
         # a failed OrderResult instead of letting the exception
         # propagate and crash the event loop.
-        logger.error(
+        ulog.executor.error(
             "Order failed for %s %s %s: %s",
             intent.side,
             intent.outcome,
@@ -564,7 +562,7 @@ def _persist_trade(
         atomic_append_to_json_list(config.UPDOWN_TRADES_FILE, record)
     except Exception:
         # Persistence failure must not crash the trading loop.
-        logger.exception("Failed to persist trade record %s", trade_id)
+        ulog.executor.exception("Failed to persist trade record %s", trade_id)
 
     # Compute and persist P&L immediately for exit trades.
     if intent.side == "sell" and entry_price is not None and exit_price is not None:
@@ -608,8 +606,8 @@ def _persist_exit_pnl(
 
     try:
         atomic_append_to_json_list(config.PNL_REPORT_FILE, pnl_record)
-        logger.info(
-            "[P&L] %s %s: entry=%.4f exit=%.4f shares=%.2f net=%+.4f USDC (%s)",
+        ulog.pnl.info(
+            "%s %s: entry=%.4f exit=%.4f shares=%.2f net=%+.4f USDC (%s)",
             intent.outcome.upper(),
             intent.market_id[:16],
             entry_price,
@@ -619,4 +617,4 @@ def _persist_exit_pnl(
             exit_reason,
         )
     except Exception:
-        logger.exception("Failed to persist P&L record %s", trade_id)
+        ulog.executor.exception("Failed to persist P&L record %s", trade_id)

@@ -1,0 +1,9 @@
+{
+  "market_id": "0x61eb9153c67924f13fd102a324be284f335672ea1fdb07d48af27a8cd03536be",
+  "question": "Will Sweden qualify for the 2026 FIFA World Cup?",
+  "predicted_probability": 0.5,
+  "edge": -0.14500000000000002,
+  "evidence_summary": "LLM error \u2014 defaulting to neutral",
+  "graph_id": null,
+  "scanned_at": "2026-03-29T00:12:54Z"
+}

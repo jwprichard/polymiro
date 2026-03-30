@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import random
 import time
 from dataclasses import dataclass, field
@@ -22,16 +21,15 @@ import aiohttp
 import websockets
 import websockets.exceptions
 
-from config import (
+from common.config import (
     POLYMARKET_CLOB_REST_URL,
     POLYMARKET_CLOB_WS_URL,
     UPDOWN_HEARTBEAT_INTERVAL_S,
     UPDOWN_RECONNECT_BASE_DELAY_S,
     UPDOWN_RECONNECT_MAX_DELAY_S,
 )
+from common.log import ulog
 from updown.retry import retry_async
-
-logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -107,13 +105,22 @@ class PolymarketWSClient:
     # ------------------------------------------------------------------
 
     def subscribe(self, asset_id: str) -> None:
-        """Track an asset_id.  If already connected, sends the subscribe
-        message immediately (fire-and-forget via the event loop)."""
+        """Track an asset_id.  If already connected, forces a reconnect
+        so the new subscription is established on a fresh connection.
+
+        The Polymarket CLOB WS rejects mid-connection subscribes with
+        ``INVALID OPERATION``, so we close the existing connection and
+        let the reconnect loop re-subscribe all tracked assets together.
+        """
         self._subscribed_assets.add(asset_id)
         if asset_id not in self._books:
             self._books[asset_id] = _AssetBook()
         if self._ws is not None:
-            asyncio.ensure_future(self._send_subscribe([asset_id]))
+            ulog.poly.info(
+                "New subscription for %s — closing WS to force reconnect",
+                asset_id[:16],
+            )
+            asyncio.ensure_future(self._force_reconnect())
 
     def unsubscribe(self, asset_id: str) -> None:
         """Stop tracking an asset_id."""
@@ -189,7 +196,7 @@ class PolymarketWSClient:
                 description=f"CLOB book seed for {token_id[:16]}",
             )
         except Exception:
-            logger.error(
+            ulog.rest.error(
                 "REST seed failed for token %s after all retries — will rely on WS updates",
                 token_id[:16],
             )
@@ -232,14 +239,14 @@ class PolymarketWSClient:
                 if server_mid > 0:
                     book.server_mid = server_mid
         except Exception:
-            logger.debug(
+            ulog.rest.debug(
                 "Could not fetch /midpoint for %s — using local mid",
                 token_id[:16],
             )
 
         mid = self._mid_price(token_id)
-        logger.info(
-            "[rest] Seeded book for %s: bid=%.4f ask=%.4f mid=%s (server_mid=%s)",
+        ulog.rest.info(
+            "Seeded book for %s: bid=%.4f ask=%.4f mid=%s (server_mid=%s)",
             token_id[:16],
             book.best_bid.price,
             book.best_ask.price,
@@ -283,7 +290,7 @@ class PolymarketWSClient:
                 ) as ws:
                     self._ws = ws
                     consecutive_failures = 0
-                    logger.info(
+                    ulog.poly.info(
                         "Connected to Polymarket CLOB WS at %s", self._url
                     )
 
@@ -318,7 +325,7 @@ class PolymarketWSClient:
                     break
                 consecutive_failures += 1
                 delay = self._backoff_delay(consecutive_failures)
-                logger.warning(
+                ulog.poly.warning(
                     "Polymarket WS disconnected (%s). Reconnecting in %.1fs "
                     "(attempt %d).",
                     exc,
@@ -332,17 +339,30 @@ class PolymarketWSClient:
                     break
                 consecutive_failures += 1
                 delay = self._backoff_delay(consecutive_failures)
-                logger.exception(
+                ulog.poly.error(
                     "Unexpected Polymarket WS error. Reconnecting in %.1fs "
                     "(attempt %d).",
                     delay,
                     consecutive_failures,
+                    exc_info=True,
                 )
                 await asyncio.sleep(delay)
 
     # ------------------------------------------------------------------
     # Protocol helpers
     # ------------------------------------------------------------------
+
+    async def _force_reconnect(self) -> None:
+        """Close the current WS connection to trigger a reconnect.
+
+        The ``run()`` loop catches the resulting ``ConnectionClosed`` and
+        re-subscribes all tracked assets on the fresh connection.
+        """
+        if self._ws is not None:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
 
     async def _send_subscribe(self, asset_ids: list[str]) -> None:
         """Send a subscribe message for the given asset_ids."""
@@ -355,9 +375,9 @@ class PolymarketWSClient:
         })
         try:
             await self._ws.send(msg)
-            logger.debug("Subscribed to assets: %s", asset_ids)
+            ulog.poly.debug("Subscribed to assets: %s", asset_ids)
         except websockets.exceptions.ConnectionClosed:
-            logger.warning("Could not subscribe — connection already closed.")
+            ulog.poly.warning("Could not subscribe — connection already closed.")
 
     async def _send_unsubscribe(self, asset_ids: list[str]) -> None:
         """Send an unsubscribe message for the given asset_ids."""
@@ -369,7 +389,7 @@ class PolymarketWSClient:
         })
         try:
             await self._ws.send(msg)
-            logger.debug("Unsubscribed from assets: %s", asset_ids)
+            ulog.poly.debug("Unsubscribed from assets: %s", asset_ids)
         except websockets.exceptions.ConnectionClosed:
             pass
 
@@ -381,12 +401,12 @@ class PolymarketWSClient:
                 try:
                     pong = await ws.ping()
                     await asyncio.wait_for(pong, timeout=10)
-                    logger.debug("Polymarket WS PING/PONG OK")
+                    ulog.poly.debug("Polymarket WS PING/PONG OK")
                 except (
                     websockets.exceptions.ConnectionClosed,
                     asyncio.TimeoutError,
                 ):
-                    logger.warning("Polymarket WS ping failed — connection lost.")
+                    ulog.poly.warning("Polymarket WS ping failed — connection lost.")
                     break
         except asyncio.CancelledError:
             return
@@ -400,7 +420,7 @@ class PolymarketWSClient:
         try:
             data = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
-            logger.warning("Unparseable WS message: %s", raw[:200] if raw else raw)
+            ulog.poly.warning("Unparseable WS message: %s", raw[:200] if raw else raw)
             return
 
         # The CLOB WS may send a single event dict or a list of events.

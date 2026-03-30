@@ -37,8 +37,8 @@ logger = logging.getLogger(__name__)
 
 def cmd_scan(_args: argparse.Namespace) -> int:
     """Execute one Polymarket scan cycle."""
-    from scanner.scanner_agent import run_scan
-    from scanner.polymarket_client import PolymarketClientError
+    from estimator.scanner.scanner_agent import run_scan
+    from estimator.scanner.polymarket_client import PolymarketClientError
 
     try:
         results = run_scan()
@@ -56,7 +56,7 @@ def cmd_scan(_args: argparse.Namespace) -> int:
 
 def cmd_research(_args: argparse.Namespace) -> int:
     """Run the research pipeline for the top unprocessed opportunity."""
-    from research.research_agent import run_research
+    from estimator.research.research_agent import run_research
 
     try:
         result = run_research()
@@ -77,7 +77,7 @@ def cmd_research(_args: argparse.Namespace) -> int:
 
 def cmd_select(_args: argparse.Namespace) -> int:
     """Score and rank research results; write pending_trades.json."""
-    from selector.selector_agent import run_selector
+    from estimator.selector.selector_agent import run_selector
 
     try:
         result = run_selector()
@@ -95,13 +95,13 @@ def cmd_select(_args: argparse.Namespace) -> int:
 
 def cmd_review(args: argparse.Namespace) -> int:
     """Interactively review pending trades and execute approved ones."""
-    import config
+    from common import config
 
     if args.dry_run:
         config.DRY_MODE = True
         logger.info("--dry-run flag set: DRY_MODE forced to True for this session.")
 
-    data_dir = Path(config.DATA_DIR)
+    data_dir = Path(config.ESTIMATOR_DATA_DIR)
     pending_path = data_dir / "pending_trades.json"
 
     if not pending_path.exists():
@@ -119,7 +119,7 @@ def cmd_review(args: argparse.Namespace) -> int:
         print("No pending trades.")
         return 0
 
-    from trading.trade_executor import execute_trades
+    from estimator.trading.trade_executor import execute_trades
 
     try:
         results = execute_trades(trades)
@@ -137,13 +137,13 @@ def cmd_review(args: argparse.Namespace) -> int:
 
 def cmd_monitor(args: argparse.Namespace) -> int:
     """Check open positions and print hold/exit recommendations."""
-    import config
+    from common import config
 
     if args.profile is not None:
         config.RISK_PROFILE = args.profile
         logger.info("Risk profile overridden to '%s'.", config.RISK_PROFILE)
 
-    from monitor.monitor_agent import run_monitor
+    from estimator.monitor.monitor_agent import run_monitor
 
     try:
         result = run_monitor()
@@ -163,7 +163,7 @@ def cmd_updown(args: argparse.Namespace) -> int:
     """Launch the async updown orchestrator loop."""
     import asyncio
 
-    import config
+    from common import config
     from updown.strategy_config import load_strategy_config
 
     # Load and validate strategy config (fail fast on bad YAML).
@@ -184,6 +184,10 @@ def cmd_updown(args: argparse.Namespace) -> int:
     if args.edge_threshold is not None:
         config.UPDOWN_EDGE_THRESHOLD = args.edge_threshold
         logger.info("Edge threshold overridden to %.4f.", config.UPDOWN_EDGE_THRESHOLD)
+
+    # --no-tick-log: disable tick JSONL recording.
+    if args.no_tick_log:
+        config.UPDOWN_TICK_LOG_ENABLED = False
 
     # Fail fast if live mode but missing API credentials.
     if not config.UPDOWN_DRY_MODE:
@@ -253,8 +257,8 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     if args.output:
         out_path = Path(args.output)
     else:
-        import config
-        backtests_dir = config.DATA_DIR / "backtests"
+        from common import config
+        backtests_dir = config.UPDOWN_DATA_DIR / "backtests"
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         source_stem = Path(args.file).stem
         out_path = backtests_dir / f"backtest_{source_stem}_{stamp}.json"
@@ -279,11 +283,11 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 def cmd_pnl(args: argparse.Namespace) -> int:
     """Settle dry-mode trades and compute cumulative P&L."""
     if args.reset:
-        from pnl.tracker import reset
+        from updown.pnl.tracker import reset
         reset()
         return 0
 
-    from pnl.tracker import run
+    from updown.pnl.tracker import run
 
     try:
         run()
@@ -316,6 +320,18 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="LEVEL",
         default="INFO",
         help="Set log level (DEBUG, INFO, WARNING, ERROR). Default: INFO",
+    )
+    common.add_argument(
+        "--filter",
+        metavar="CATEGORIES",
+        default=None,
+        help=(
+            "Comma-separated log category filter. "
+            "e.g. --filter poly,signal,exit  or  --filter '*,-binance'. "
+            "Categories: poly, binance, signal, entry, exit, gamma, rest, "
+            "position, rotate, backpressure, latency, dry, live, pnl, "
+            "executor, retry, startup."
+        ),
     )
 
     subparsers = parser.add_subparsers(dest="subcommand", title="subcommands")
@@ -382,8 +398,14 @@ def build_parser() -> argparse.ArgumentParser:
     updown_parser.add_argument(
         "--strategy",
         type=str,
-        default="strategy.yml",
-        help="Path to strategy YAML config file (default: strategy.yml).",
+        default="updown/strategy.yml",
+        help="Path to strategy YAML config file (default: updown/strategy.yml).",
+    )
+    updown_parser.add_argument(
+        "--no-tick-log",
+        action="store_true",
+        default=False,
+        help="Disable tick-level JSONL logging (enabled by default).",
     )
 
     # --- backtest ---
@@ -400,8 +422,8 @@ def build_parser() -> argparse.ArgumentParser:
     backtest_parser.add_argument(
         "--strategy",
         type=str,
-        default="strategy.yml",
-        help="Path to strategy YAML config file (default: strategy.yml).",
+        default="updown/strategy.yml",
+        help="Path to strategy YAML config file (default: updown/strategy.yml).",
     )
     backtest_parser.add_argument(
         "--edge-threshold",
@@ -452,6 +474,12 @@ def main() -> None:
         level=level,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
+
+    # Apply --filter before any updown/estimator imports so categories
+    # are configured before CategoryLogger instances are created.
+    if getattr(args, "filter", None):
+        from common.log import apply_filter
+        apply_filter(args.filter)
 
     dispatch = {
         "scan": cmd_scan,

@@ -14,12 +14,9 @@ Usage:
     )
 """
 
-import logging
-
-import config
+from common import config
+from common.log import ulog
 from updown.types import SignalResult
-
-logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Scale factor: maps a BTC percentage move to a probability shift.
@@ -128,7 +125,7 @@ def compute_signal(
     # Direction and edge are preserved for logging; only should_trade is
     # forced to False so callers can still observe the math.
     if abs(pct_change) < MIN_BTC_PCT_CHANGE:
-        logger.debug(
+        ulog.signal.debug(
             "BTC pct_change %.6f%% below min gate %.4f%% — skipping tick "
             "(direction=%s edge=%+.4f implied=%.4f)",
             pct_change * 100,

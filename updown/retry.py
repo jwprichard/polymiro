@@ -10,11 +10,10 @@ not strategy parameters, so they live here rather than in config.py.
 from __future__ import annotations
 
 import asyncio
-import logging
 import random
 from typing import Any, Awaitable, Callable, TypeVar
 
-logger = logging.getLogger(__name__)
+from common.log import ulog
 
 # ---------------------------------------------------------------------------
 # Backoff constants
@@ -76,8 +75,8 @@ async def retry_async(
             last_exc = exc
             if attempt < max_attempts:
                 delay = _backoff_delay(attempt)
-                logger.warning(
-                    "[retry] %s failed (attempt %d/%d): %s — retrying in %.1fs",
+                ulog.retry.warning(
+                    "%s failed (attempt %d/%d): %s — retrying in %.1fs",
                     description,
                     attempt,
                     max_attempts,
@@ -86,8 +85,8 @@ async def retry_async(
                 )
                 await asyncio.sleep(delay)
             else:
-                logger.error(
-                    "[retry] %s failed after %d attempts: %s",
+                ulog.retry.error(
+                    "%s failed after %d attempts: %s",
                     description,
                     max_attempts,
                     exc,

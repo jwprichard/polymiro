@@ -15,7 +15,6 @@ Usage::
 from __future__ import annotations
 
 import asyncio
-import logging
 import signal
 import time
 from dataclasses import dataclass, field
@@ -23,7 +22,8 @@ from typing import Optional
 
 import aiohttp
 
-import config
+from common import config
+from common.log import ulog
 from updown.binance_ws import BinanceWS
 from updown import executor as _executor
 from updown.decisions import evaluate_entry, evaluate_exit, evaluate_expiry
@@ -42,8 +42,6 @@ from updown.types import (
     get_exchange_now_ms,
     transition,
 )
-
-logger = logging.getLogger(__name__)
 
 # Module-level tick logger — instantiated once, reused across all ticks.
 _tick_logger = TickLogger()
@@ -112,7 +110,7 @@ async def _seed_markets_from_rest(
     window_end = window_start + 300
     slug = f"btc-updown-5m-{window_start}"
 
-    logger.info("[gamma] Looking up current market by slug: %s", slug)
+    ulog.gamma.info("Looking up current market by slug: %s", slug)
 
     timeout = aiohttp.ClientTimeout(total=15)
 
@@ -131,13 +129,13 @@ async def _seed_markets_from_rest(
             description=f"gamma market fetch for {slug}",
         )
     except Exception:
-        logger.error("[gamma] All retries exhausted for slug %s — continuing without seed", slug)
+        ulog.gamma.error("All retries exhausted for slug %s — continuing without seed", slug)
         return []
 
     # Gamma returns a list when querying by slug
     records = data if isinstance(data, list) else [data]
     if not records or not isinstance(records[0], dict):
-        logger.warning("[gamma] No market found for slug %s", slug)
+        ulog.gamma.warning("No market found for slug %s", slug)
         return []
 
     record = records[0]
@@ -153,10 +151,10 @@ async def _seed_markets_from_rest(
     token_id = raw_token_ids[0] if raw_token_ids else ""
 
     if not condition_id or not token_id:
-        logger.warning("[gamma] Market %s missing conditionId or tokenId", slug)
+        ulog.gamma.warning("Market %s missing conditionId or tokenId", slug)
         return []
 
-    logger.info("[gamma] Found market: %s (ends %.0fs from now)", question, window_end - now)
+    ulog.gamma.info("Found market: %s (ends %.0fs from now)", question, window_end - now)
     return [(condition_id, question, token_id, float(window_end))]
 
 
@@ -178,8 +176,8 @@ async def _seed_prices_from_rest(
             await polymarket.seed_book_from_rest(token_id, session)
             token_count += 1
 
-    logger.info(
-        "[rest] Bootstrapped prices for %d tokens across %d markets",
+    ulog.rest.info(
+        "Bootstrapped prices for %d tokens across %d markets",
         token_count,
         len(tracked_markets),
     )
@@ -206,7 +204,7 @@ async def _seed_next_window_market(
     next_window_end = next_window_start + 300
     slug = f"btc-updown-5m-{next_window_start}"
 
-    logger.info("[gamma] Looking up next-window market by slug: %s", slug)
+    ulog.gamma.info("Looking up next-window market by slug: %s", slug)
 
     timeout = aiohttp.ClientTimeout(total=15)
     try:
@@ -218,12 +216,12 @@ async def _seed_next_window_market(
             resp.raise_for_status()
             data = await resp.json()
     except Exception:
-        logger.exception("[gamma] Failed to fetch next-window market for slug %s", slug)
+        ulog.gamma.exception("Failed to fetch next-window market for slug %s", slug)
         return []
 
     records = data if isinstance(data, list) else [data]
     if not records or not isinstance(records[0], dict):
-        logger.warning("[gamma] No market found for next-window slug %s", slug)
+        ulog.gamma.warning("No market found for next-window slug %s", slug)
         return []
 
     record = records[0]
@@ -239,11 +237,11 @@ async def _seed_next_window_market(
     token_id = raw_token_ids[0] if raw_token_ids else ""
 
     if not condition_id or not token_id:
-        logger.warning("[gamma] Next-window market %s missing conditionId or tokenId", slug)
+        ulog.gamma.warning("Next-window market %s missing conditionId or tokenId", slug)
         return []
 
-    logger.info(
-        "[gamma] Found next-window market: %s (starts in %.0fs)",
+    ulog.gamma.info(
+        "Found next-window market: %s (starts in %.0fs)",
         question,
         next_window_start - time.time(),
     )
@@ -325,29 +323,29 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
     """
 
     # --- Startup banner ---------------------------------------------------
-    logger.info("=" * 60)
-    logger.info("UPDOWN ORCHESTRATOR STARTING")
-    logger.info("-" * 60)
-    logger.info("  dry_mode        : %s", config.UPDOWN_DRY_MODE)
-    logger.info("  scale_factor    : %.6f", config.UPDOWN_SCALE_FACTOR)
-    logger.info("  min_btc_pct_chg : %.4f%% (%.6f)", config.UPDOWN_MIN_BTC_PCT_CHANGE * 100, config.UPDOWN_MIN_BTC_PCT_CHANGE)
-    logger.info("  edge_threshold  : %.4f", config.UPDOWN_EDGE_THRESHOLD)
-    logger.info("  trade_amount    : %.2f USDC", config.UPDOWN_TRADE_AMOUNT_USDC)
-    logger.info("  window_seconds  : %d s", config.UPDOWN_WINDOW_SECONDS)
-    logger.info("  rotation_lead   : %.1f s", config.UPDOWN_ROTATION_LEAD_TIME_S)
-    logger.info("  binance_ws      : %s", config.BINANCE_WS_URL)
-    logger.info("  polymarket_ws   : %s", config.POLYMARKET_CLOB_WS_URL)
-    logger.info("  polymarket_rest : %s", config.POLYMARKET_CLOB_REST_URL)
+    ulog.startup.info("=" * 60)
+    ulog.startup.info("UPDOWN ORCHESTRATOR STARTING")
+    ulog.startup.info("-" * 60)
+    ulog.startup.info("  dry_mode        : %s", config.UPDOWN_DRY_MODE)
+    ulog.startup.info("  scale_factor    : %.6f", config.UPDOWN_SCALE_FACTOR)
+    ulog.startup.info("  min_btc_pct_chg : %.4f%% (%.6f)", config.UPDOWN_MIN_BTC_PCT_CHANGE * 100, config.UPDOWN_MIN_BTC_PCT_CHANGE)
+    ulog.startup.info("  edge_threshold  : %.4f", config.UPDOWN_EDGE_THRESHOLD)
+    ulog.startup.info("  trade_amount    : %.2f USDC", config.UPDOWN_TRADE_AMOUNT_USDC)
+    ulog.startup.info("  window_seconds  : %d s", config.UPDOWN_WINDOW_SECONDS)
+    ulog.startup.info("  rotation_lead   : %.1f s", config.UPDOWN_ROTATION_LEAD_TIME_S)
+    ulog.startup.info("  binance_ws      : %s", config.BINANCE_WS_URL)
+    ulog.startup.info("  polymarket_ws   : %s", config.POLYMARKET_CLOB_WS_URL)
+    ulog.startup.info("  polymarket_rest : %s", config.POLYMARKET_CLOB_REST_URL)
     if strategy_config is not None:
         er = strategy_config.exit_rules
-        logger.info("  exit_rules      : tp=%s(%.4f) sl=%s(%.4f) te=%s(%.1fs) reentry=%s",
+        ulog.startup.info("  exit_rules      : tp=%s(%.4f) sl=%s(%.4f) te=%s(%.1fs) reentry=%s",
                      er.take_profit.enabled, er.take_profit.target_delta,
                      er.stop_loss.enabled, er.stop_loss.max_loss_delta,
                      er.time_exit.enabled, er.time_exit.max_hold_seconds,
                      er.allow_reentry)
     else:
-        logger.info("  exit_rules      : DISABLED (no strategy config)")
-    logger.info("=" * 60)
+        ulog.startup.info("  exit_rules      : DISABLED (no strategy config)")
+    ulog.startup.info("=" * 60)
 
     # --- Shared state -----------------------------------------------------
     price_queue: asyncio.Queue[PriceUpdate] = asyncio.Queue(maxsize=4096)
@@ -373,8 +371,8 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
             )
             tracked_markets[condition_id] = tracked
             polymarket.subscribe(token_id)
-            logger.info(
-                "[gamma] Seeded market: %s — %s (token=%s)",
+            ulog.gamma.info(
+                "Seeded market: %s — %s (token=%s)",
                 condition_id[:16],
                 question[:80],
                 token_id[:12],
@@ -389,7 +387,7 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
     loop = asyncio.get_running_loop()
 
     def _signal_handler() -> None:
-        logger.info("Received shutdown signal -- initiating graceful shutdown")
+        ulog.startup.info("Received shutdown signal -- initiating graceful shutdown")
         shutdown_event.set()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -413,6 +411,7 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
         """Consume Binance price ticks and evaluate signals for tracked markets."""
         tick_count = 0
         last_heartbeat = time.time()
+        last_poly_log = 0.0
         while not shutdown_event.is_set():
             try:
                 # Wait for the next price tick with a timeout so we can
@@ -429,8 +428,8 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
                     tick, drained = drain_to_latest(price_queue, tick)
                     if drained > 0:
                         ticks_drained += drained
-                        logger.warning(
-                            "[backpressure] Drained %d stale ticks (queue was %d, total drained=%d)",
+                        ulog.backpressure.warning(
+                            "Drained %d stale ticks (queue was %d, total drained=%d)",
                             drained,
                             qsize,
                             ticks_drained,
@@ -444,8 +443,8 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
                     if open_price and open_price > 0:
                         pct_chg = f" chg={((tick.price - open_price) / open_price) * 100:+.3f}%"
                     avg_lat, max_lat, lat_orders = drain_latency_stats()
-                    logger.info(
-                        "[binance] Heartbeat: %d ticks | %d markets | BTC=%.2f%s | qsize=%d drained=%d slippage_rejections=%d avg_latency=%dms max_latency=%dms orders=%d",
+                    ulog.binance.info(
+                        "Heartbeat: %d ticks | %d markets | BTC=%.2f%s | qsize=%d drained=%d slippage_rejections=%d avg_latency=%dms max_latency=%dms orders=%d",
                         tick_count,
                         len(tracked_markets),
                         tick.price,
@@ -468,14 +467,14 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
                                 stale_tag = f" STALE({age_ms / 1000:.0f}s)"
                             # Re-seed from REST when WS goes silent.
                             if age_ms is not None and age_ms > _REST_RESEED_AGE_MS:
-                                logger.warning(
-                                    "[poly] Price stale for %s (age=%ds) — re-seeding from REST",
+                                ulog.poly.warning(
+                                    "Price stale for %s (age=%ds) — re-seeding from REST",
                                     aid[:16], age_ms // 1000,
                                 )
                                 await polymarket.seed_book_from_rest(aid, http_session)
                             # Base heartbeat line for this market.
-                            logger.info(
-                                "[poly]  %s | YES=%.3f NO=%.3f | state=%s TTL=%.0fs%s",
+                            ulog.poly.info(
+                                " %s | YES=%.3f NO=%.3f | state=%s TTL=%.0fs%s",
                                 tm.question[26:50],
                                 yp or 0,
                                 np_ or 0,
@@ -493,8 +492,8 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
                                     pos_price = yp
                                 unrealized_delta = pos_price - tm.entry_price
                                 hold_time = now - tm.entry_time
-                                logger.info(
-                                    "[position] %s | entry=%.4f current=%.4f unrealized_delta=%+.4f held=%.1fs side=%s",
+                                ulog.position.info(
+                                    "%s | entry=%.4f current=%.4f unrealized_delta=%+.4f held=%.1fs side=%s",
                                     cid[:16],
                                     tm.entry_price,
                                     pos_price,
@@ -504,12 +503,29 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
                                 )
                     last_heartbeat = now
 
+                # Log Polymarket prices once per second.
+                if now - last_poly_log >= 1.0:
+                    for cid, tm in tracked_markets.items():
+                        for aid in tm.asset_ids:
+                            yp = polymarket.get_yes_price(aid)
+                            np_ = polymarket.get_no_price(aid)
+                            age_ms = polymarket.get_price_age_ms(aid)
+                            age_tag = f" age={age_ms / 1000:.1f}s" if age_ms is not None else ""
+                            ulog.poly.info(
+                                "%s YES=%.4f NO=%.4f%s",
+                                cid[:16],
+                                yp or 0,
+                                np_ or 0,
+                                age_tag,
+                            )
+                    last_poly_log = now
+
                 await _process_tick(tick, binance, polymarket, tracked_markets, http_session, strategy_config)
 
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("Tick processor encountered an error")
+                ulog.startup.exception("Tick processor encountered an error")
 
     # --- Launch tasks -----------------------------------------------------
     tasks: list[asyncio.Task] = [
@@ -528,13 +544,13 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
         # If a task finished before the shutdown signal, log the reason.
         for task in done:
             if task.get_name() != "shutdown_waiter" and task.exception():
-                logger.error(
+                ulog.startup.error(
                     "Task %s crashed: %s", task.get_name(), task.exception()
                 )
 
     finally:
         # --- Graceful shutdown --------------------------------------------
-        logger.info("Shutting down updown orchestrator...")
+        ulog.startup.info("Shutting down updown orchestrator...")
 
         # Cancel all component tasks.
         for task in tasks:
@@ -549,15 +565,15 @@ async def run(strategy_config: StrategyConfig | None = None) -> None:
         await http_session.close()
 
         # Log final state.
-        logger.info("Final state: %d tracked markets", len(tracked_markets))
+        ulog.startup.info("Final state: %d tracked markets", len(tracked_markets))
         for cid, tm in tracked_markets.items():
-            logger.info(
+            ulog.startup.info(
                 "  %s state=%s question=%s",
                 cid[:16],
                 tm.state.value,
                 tm.question[:60],
             )
-        logger.info("Updown orchestrator stopped.")
+        ulog.startup.info("Updown orchestrator stopped.")
 
 
 # ---------------------------------------------------------------------------
@@ -580,8 +596,8 @@ def _handle_market_resolved(
     for aid in tracked.asset_ids:
         polymarket.unsubscribe(aid)
 
-    logger.info(
-        "[poly] Market resolved and removed: %s -- %s (state=%s)",
+    ulog.poly.info(
+        "Market resolved and removed: %s -- %s (state=%s)",
         condition_id[:16],
         tracked.question[:60],
         tracked.state.value,
@@ -608,8 +624,8 @@ async def _rotate_market(
         tracked_markets[condition_id] = tracked
         polymarket.subscribe(token_id)
         await polymarket.seed_book_from_rest(token_id, session)
-        logger.info(
-            "[rotate] New market: %s — %s (token=%s, TTL=%.0fs)",
+        ulog.rotate.info(
+            "New market: %s — %s (token=%s, TTL=%.0fs)",
             condition_id[:16],
             question[:80],
             token_id[:12],
@@ -645,8 +661,8 @@ async def _rotate_market_early(
         tracked_markets[condition_id] = tracked
         polymarket.subscribe(token_id)
         await polymarket.seed_book_from_rest(token_id, session)
-        logger.info(
-            "[early-rotate] Seeded next-window market: %s — %s (token=%s, TTL=%.0fs)",
+        ulog.early_rotate.info(
+            "Seeded next-window market: %s — %s (token=%s, TTL=%.0fs)",
             condition_id[:16],
             question[:80],
             token_id[:12],
@@ -768,8 +784,8 @@ async def _process_tick(
                 for t in tracked_markets.values()
             )
             if not already_seeded:
-                logger.info(
-                    "[early-rotate] Market %s TTL=%.1fs < threshold=%.1fs — seeding next window",
+                ulog.early_rotate.info(
+                    "Market %s TTL=%.1fs < threshold=%.1fs — seeding next window",
                     _cid[:16], ttl, lead_time,
                 )
                 await _rotate_market_early(_tm, tracked_markets, polymarket, http_session)
@@ -783,8 +799,8 @@ async def _process_tick(
 
             # Staleness gate: reject prices too old for exit evaluation.
             if ctx.price_age_ms > _MAX_PRICE_AGE_MS:
-                logger.debug(
-                    "[exit] Skipping %s: stale price (age=%s ms, max=%d ms)",
+                ulog.exit.debug(
+                    "Skipping %s: stale price (age=%s ms, max=%d ms)",
                     condition_id[:16], ctx.price_age_ms, _MAX_PRICE_AGE_MS,
                 )
                 continue
@@ -813,7 +829,7 @@ async def _process_tick(
 
         if tracked.state != MarketState.IDLE:
             if tracked.state == MarketState.ENTERING:
-                logger.debug("[entry] Skipping %s: entry order in flight", condition_id[:16])
+                ulog.entry.debug("Skipping %s: entry order in flight", condition_id[:16])
             continue
 
         ctx = contexts.get(condition_id)
@@ -822,8 +838,8 @@ async def _process_tick(
 
         # Staleness gate: reject prices too old for signal computation.
         if ctx.price_age_ms > _MAX_PRICE_AGE_MS:
-            logger.debug(
-                "[entry] Skipping %s/%s: stale price (age=%s ms, max=%d ms)",
+            ulog.entry.debug(
+                "Skipping %s/%s: stale price (age=%s ms, max=%d ms)",
                 condition_id[:16], ctx.token_id[:12], ctx.price_age_ms, _MAX_PRICE_AGE_MS,
             )
             continue
@@ -866,8 +882,8 @@ async def _execute_exit(
 
     hold_duration_s = now - tracked.entry_time
     delta = position_price - tracked.entry_price
-    logger.info(
-        "[exit] %s triggered for %s: entry=%.4f current=%.4f delta=%+.4f held=%.1fs",
+    ulog.exit.info(
+        "%s triggered for %s: entry=%.4f current=%.4f delta=%+.4f held=%.1fs",
         exit_signal.reason, condition_id[:16],
         tracked.entry_price, position_price, delta, hold_duration_s,
     )
@@ -880,8 +896,8 @@ async def _execute_exit(
     )
 
     if config.UPDOWN_DRY_MODE:
-        logger.info(
-            "[DRY-EXIT] Would sell %s %s @ %.4f (entry=%.4f, held=%.1fs, reason=%s)",
+        ulog.DRY_EXIT.info(
+            "Would sell %s %s @ %.4f (entry=%.4f, held=%.1fs, reason=%s)",
             exit_intent.outcome, condition_id[:16],
             position_price, tracked.entry_price,
             hold_duration_s, exit_signal.reason,
@@ -900,8 +916,8 @@ async def _execute_exit(
         )
 
         if result.success:
-            logger.info(
-                "[exit] Sell executed for %s: order_id=%s filled_price=%.4f reason=%s held=%.1fs",
+            ulog.exit.info(
+                "Sell executed for %s: order_id=%s filled_price=%.4f reason=%s held=%.1fs",
                 condition_id[:16], result.order_id,
                 result.filled_price or 0.0, exit_signal.reason, hold_duration_s,
             )
@@ -916,13 +932,13 @@ async def _execute_exit(
             else:
                 tracked.cooldown_until = float("inf")
         else:
-            logger.warning("[exit] Sell failed for %s: %s", condition_id[:16], result.error)
+            ulog.exit.warning("Sell failed for %s: %s", condition_id[:16], result.error)
             tracked.state = transition(tracked.state, MarketState.IDLE)
             tracked.state = transition(tracked.state, MarketState.ENTERING)
             tracked.state = transition(tracked.state, MarketState.ENTERED)
 
     except Exception:
-        logger.exception("Unexpected error executing exit sell for %s", condition_id[:16])
+        ulog.exit.exception("Unexpected error executing exit sell for %s", condition_id[:16])
         tracked.state = transition(tracked.state, MarketState.IDLE)
         tracked.state = transition(tracked.state, MarketState.ENTERING)
         tracked.state = transition(tracked.state, MarketState.ENTERED)
@@ -943,8 +959,8 @@ async def _execute_entry(
     sig = intent.signal
     pct_change = (btc_current - btc_open) / btc_open * 100
     ttl = tracked.expiry_time - now
-    logger.debug(
-        "[poly/binance] %s | YES=%.3f NO=%.3f spread=%.3f | "
+    ulog.poly_binance.debug(
+        "%s | YES=%.3f NO=%.3f spread=%.3f | "
         "BTC=%.2f open=%.2f chg=%+.3f%% | "
         "implied=%.3f edge=%+.4f dir=%s trade=%s | TTL=%.0fs",
         tracked.question[26:50],
@@ -953,8 +969,8 @@ async def _execute_entry(
         sig.implied_probability, sig.edge, sig.direction, sig.should_trade,
         max(ttl, 0),
     )
-    logger.info(
-        "[signal] Triggered for %s: direction=%s edge=%.4f implied=%.4f market=%.4f",
+    ulog.signal.info(
+        "Triggered for %s: direction=%s edge=%.4f implied=%.4f market=%.4f",
         condition_id[:16], sig.direction, sig.edge,
         sig.implied_probability, sig.market_price,
     )
@@ -974,14 +990,14 @@ async def _execute_entry(
             tracked.entry_time = now
             tracked.entry_side = intent.outcome
             tracked.entry_size_usdc = intent.size_usdc
-            logger.info(
-                "[poly] Trade executed for %s: order_id=%s filled_price=%.4f",
+            ulog.poly.info(
+                "Trade executed for %s: order_id=%s filled_price=%.4f",
                 condition_id[:16], result.order_id, result.filled_price or 0.0,
             )
         else:
             tracked.state = transition(tracked.state, MarketState.IDLE)
-            logger.warning("[poly] Trade failed for %s: %s", condition_id[:16], result.error)
+            ulog.poly.warning("Trade failed for %s: %s", condition_id[:16], result.error)
 
     except Exception:
-        logger.exception("Unexpected error executing trade for %s", condition_id[:16])
+        ulog.entry.exception("Unexpected error executing trade for %s", condition_id[:16])
         tracked.state = transition(tracked.state, MarketState.IDLE)

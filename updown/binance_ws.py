@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import bisect
 import json
-import logging
 import random
 import time
 from collections import deque
@@ -25,15 +24,14 @@ from websockets.exceptions import (
     WebSocketException,
 )
 
-from config import (
+from common.config import (
     BINANCE_WS_URL,
     UPDOWN_RECONNECT_BASE_DELAY_S,
     UPDOWN_RECONNECT_MAX_DELAY_S,
     UPDOWN_WINDOW_SECONDS,
 )
+from common.log import ulog
 from updown.types import PriceUpdate
-
-logger = logging.getLogger(__name__)
 
 
 class BinanceWSError(Exception):
@@ -90,19 +88,19 @@ class BinanceWS:
         cleanly when the caller cancels the task.
         """
         self._running = True
-        logger.info("BinanceWS starting — target %s", self._ws_url)
+        ulog.binance.info("starting — target %s", self._ws_url)
 
         while self._running:
             try:
                 await self._connect_and_stream()
             except asyncio.CancelledError:
-                logger.info("BinanceWS cancelled — shutting down cleanly")
+                ulog.binance.info("cancelled — shutting down cleanly")
                 self._running = False
                 raise
             except (ConnectionClosed, ConnectionClosedError, WebSocketException, OSError) as exc:
                 delay = self._next_backoff_delay()
-                logger.warning(
-                    "BinanceWS connection lost (%s) — reconnecting in %.1fs (attempt %d)",
+                ulog.binance.warning(
+                    "connection lost (%s) — reconnecting in %.1fs (attempt %d)",
                     exc,
                     delay,
                     self._reconnect_attempts,
@@ -110,8 +108,8 @@ class BinanceWS:
                 await asyncio.sleep(delay)
             except Exception as exc:
                 delay = self._next_backoff_delay()
-                logger.error(
-                    "BinanceWS unexpected error (%s: %s) — reconnecting in %.1fs (attempt %d)",
+                ulog.binance.error(
+                    "unexpected error (%s: %s) — reconnecting in %.1fs (attempt %d)",
                     type(exc).__name__,
                     exc,
                     delay,
@@ -156,7 +154,7 @@ class BinanceWS:
     async def _connect_and_stream(self) -> None:
         """Open a single WebSocket connection and process messages until
         the connection drops or an error occurs."""
-        logger.info("BinanceWS connecting to %s", self._ws_url)
+        ulog.binance.info("connecting to %s", self._ws_url)
 
         async with websockets.connect(
             self._ws_url,
@@ -164,21 +162,21 @@ class BinanceWS:
             ping_timeout=10,
             close_timeout=5,
         ) as ws:
-            logger.info("BinanceWS connected")
+            ulog.binance.info("connected")
             self._reconnect_attempts = 0  # Reset on successful connect.
 
             async for raw_msg in ws:
                 await self._handle_message(raw_msg)
 
         # If we exit the async for normally the server closed the connection.
-        logger.info("BinanceWS server closed the connection")
+        ulog.binance.info("server closed the connection")
 
     async def _handle_message(self, raw_msg: str | bytes) -> None:
         """Parse a single Binance trade message and propagate it."""
         try:
             data = json.loads(raw_msg)
         except (json.JSONDecodeError, TypeError) as exc:
-            logger.debug("BinanceWS ignoring unparseable message: %s", exc)
+            ulog.binance.debug("ignoring unparseable message: %s", exc)
             return
 
         # Binance trade stream payload fields:
@@ -194,7 +192,7 @@ class BinanceWS:
             timestamp_ms = int(data["T"])
             symbol = str(data["s"])
         except (KeyError, ValueError) as exc:
-            logger.debug("BinanceWS malformed trade payload: %s", exc)
+            ulog.binance.debug("malformed trade payload: %s", exc)
             return
 
         update = PriceUpdate(symbol=symbol, price=price, timestamp_ms=timestamp_ms)
@@ -208,7 +206,7 @@ class BinanceWS:
         try:
             self._queue.put_nowait(update)
         except asyncio.QueueFull:
-            logger.debug("BinanceWS queue full — dropping tick at %d", timestamp_ms)
+            ulog.binance.debug("queue full — dropping tick at %d", timestamp_ms)
 
         self._ticks_received += 1
 

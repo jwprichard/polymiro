@@ -1,0 +1,9 @@
+{
+  "market_id": "0x22e7b5e35423e76842dd3a5e1a21d13793811080d5e7b2896d0c001bd5e97d54",
+  "question": "Will the Oklahoma City Thunder win the 2026 NBA Finals?",
+  "predicted_probability": 0.5,
+  "edge": 0.125,
+  "evidence_summary": "LLM error \u2014 defaulting to neutral",
+  "graph_id": null,
+  "scanned_at": "2026-03-29T00:12:54Z"
+}

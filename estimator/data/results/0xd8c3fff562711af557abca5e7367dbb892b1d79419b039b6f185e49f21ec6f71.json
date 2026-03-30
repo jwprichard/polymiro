@@ -1,0 +1,9 @@
+{
+  "market_id": "0xd8c3fff562711af557abca5e7367dbb892b1d79419b039b6f185e49f21ec6f71",
+  "question": "Will Italy qualify for the 2026 FIFA World Cup?",
+  "predicted_probability": 0.58,
+  "edge": -0.19500000000000006,
+  "evidence_summary": "Italy has a mixed recent qualification record and narrowly missed out in the last few attempts. However, they have historically been strong contenders for the World Cup.",
+  "graph_id": null,
+  "scanned_at": "2026-03-29T00:30:01Z"
+}

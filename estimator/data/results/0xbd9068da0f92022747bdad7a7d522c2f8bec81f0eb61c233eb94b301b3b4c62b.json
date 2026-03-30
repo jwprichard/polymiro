@@ -1,0 +1,9 @@
+{
+  "market_id": "0xbd9068da0f92022747bdad7a7d522c2f8bec81f0eb61c233eb94b301b3b4c62b",
+  "question": "Will Poland qualify for the 2026 FIFA World Cup?",
+  "predicted_probability": 0.5,
+  "edge": 0.135,
+  "evidence_summary": "LLM error \u2014 defaulting to neutral",
+  "graph_id": null,
+  "scanned_at": "2026-03-29T00:12:54Z"
+}
